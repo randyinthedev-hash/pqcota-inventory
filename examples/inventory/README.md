@@ -87,9 +87,9 @@ What the first line produces is **a `CollectionResult` in the declaration lane**
 To query **an accumulated inventory that several nodes built up over time**, rather than a file collation, you need Postgres:
 ```bash
 # first load into the same DSN (pqcota-ingest), then:
-PQCOTA_DSN=postgres://… go run ./inventory/cmd/pqcota-inventory
+PQCOTA_DSN=postgres://… go run ./cmd/pqcota-inventory
 ```
-→ up to the ▸ endpoint and profile header and the `@` app labels (a shared .so shows several). For the end-to-end flow see [demo/](https://github.com/randyinthedev-hash/pqcota/tree/main/demo). Command map: [inventory/cmd/README](../../inventory/cmd/README.md).
+→ up to the ▸ endpoint and profile header and the `@` app labels (a shared .so shows several). For the end-to-end flow see [demo/](https://github.com/randyinthedev-hash/pqcota/tree/main/demo). Command map: [cmd/README](../../cmd/README.md).
 
 ### `pqcota-cbom-ingest`: receive a CBOM produced by an external tool
 For sources and build artifacts that a collector does not observe, it **receives** the standard CycloneDX produced by **CBOMkit** or similar in the user's CI, and loads it. Feeding it [`sample-cbom.json`](sample-cbom.json) gives:

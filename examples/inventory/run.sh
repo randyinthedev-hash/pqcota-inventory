@@ -10,7 +10,7 @@ cd "$ROOT"
 echo "▶ pqcota-discover-view — collate ../data/results → discovered assets + observed edge grades + topology DOT"
 echo "   (nodes.json resolves observed IPs to node names: 10.0.0.9 → node-c)"
 echo
-go run ./inventory/cmd/pqcota-discover-view \
+go run ./cmd/pqcota-discover-view \
     "$ROOT/examples/data/results" \
     "$ROOT/examples/data/nodes.json" \
     "$TMP/topology.dot"
@@ -21,7 +21,7 @@ head -6 "$TMP/topology.dot" | sed 's/^/   /'
 echo
 echo "▶ pqcota-declare-attribution — a person names the app for an edge the capture missed"
 echo "   (a short-lived connection is gone by lookup time, so app_key stays empty — see attribution.csv)"
-go run ./inventory/cmd/pqcota-declare-attribution --out "$TMP/declared-attr" "$HERE/attribution.csv"
+go run ./cmd/pqcota-declare-attribution --out "$TMP/declared-attr" "$HERE/attribution.csv"
 echo
 echo "the declared-lane result (the observed edges themselves are untouched):"
 sed 's/^/   /' "$TMP/declared-attr/attribution-000.json"
@@ -30,9 +30,9 @@ echo
 echo
 echo "▶ pqcota-cbom-ingest — validate and ingest a CBOM produced by an external tool"
 echo "   (source and build artifacts, which no collector observes, arrive as standard CycloneDX from your CI)"
-go run ./inventory/cmd/pqcota-cbom-ingest "$HERE/sample-cbom.json" node-b
+go run ./cmd/pqcota-cbom-ingest "$HERE/sample-cbom.json" node-b
 
 echo
 echo "✅ ran the file-collation view (ephemeral), the declared-lane import, and the external CBOM intake."
-echo "   • central persistent query (with endpoint and profile headers): PQCOTA_DSN=<postgres> go run ./inventory/cmd/pqcota-inventory"
+echo "   • central persistent query (with endpoint and profile headers): PQCOTA_DSN=<postgres> go run ./cmd/pqcota-inventory"
 echo "     (ingest into the same DSN with pqcota-ingest first — see demo/)"

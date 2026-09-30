@@ -1,4 +1,4 @@
-# inventory/cmd/: the inventory entry points
+# cmd/: the inventory entry points
 
 The CLIs (Go binaries) of the inventory stage. They **load into the center** what the collectors observed, and **read back**, read-only, what has accumulated. They are sorted into five categories.
 
@@ -6,7 +6,7 @@ The CLIs (Go binaries) of the inventory stage. They **load into the center** wha
 
 **`pqcota-ingest` reads from one directory** the `CollectionResult` JSON files the collectors produced, and loads them through the scope gate → normalization → the append-only history. This is what makes the data the query commands below read.
 
-Gathering the files into that directory is **the user's** job. In the demo, Ansible runs the [collectors](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/discovery/cmd/README.md) on each node and retrieves the results to the controller.
+Gathering the files into that directory is **the user's** job. In the demo, Ansible runs the [collectors](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/cmd/README.md) on each node and retrieves the results to the controller.
 
 ### `pqcota-ingest`
 
@@ -22,7 +22,7 @@ pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
 
 | Environment variable | What it does |
 |---|---|
-| `PQCOTA_DSN` | the Postgres connection string ([format](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/discovery/cmd/README.md#pqcota-hosts)). If absent there is only an in-memory summary: nothing is persisted |
+| `PQCOTA_DSN` | the Postgres connection string ([format](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/cmd/README.md#pqcota-hosts)). If absent there is only an in-memory summary: nothing is persisted |
 | `PQCOTA_VERIFY_KEY` | public keys (comma separated). If present it verifies the result signatures and refuses a mismatch. The key pair is made by [`pqcota-keygen`](https://github.com/randyinthedev-hash/pqcota-common/blob/main/cmd/README.md#pqcota-keygen), and the matching private key is used **by the collector on the node** |
 | `PQCOTA_REQUIRE_SIGNATURE` | if `1`, **loading does not start** when there is no key to verify with. If absent, verification is skipped but that count is reported separately as "signature unchecked". It is not put in the same place as a pass |
 | `PQCOTA_ORG` | the organization this load belongs to (lowercase, digits and hyphens, 2–64 characters). If absent it is bound to `default`. **Every command that opens the store has to see the same value**: if the reading side and the writing side differ, the data is there but you cannot see it |
@@ -51,7 +51,7 @@ blank that shows as `@?` on the query screen. The operator fills that blank with
 | `dst` | the peer, exactly as printed on the edge: it appears in `pqcota-inventory -snapshot`. **Do not write the port separately**: the contract defines `dst_addr` as `"ip:port"` so it is already there, and writing it in two places lets one go wrong without any warning |
 | `app_key` | the app that opened this edge |
 
-**A sample you can run as it is** is in [examples/inventory](../../examples/inventory/README.md#pqcota-declare-attribution-a-person-writes-the-app-for-an-edge-the-observation-could-not-attribute) ([attribution.csv](../../examples/inventory/attribution.csv)).
+**A sample you can run as it is** is in [examples/inventory](../examples/inventory/README.md#pqcota-declare-attribution-a-person-writes-the-app-for-an-edge-the-observation-could-not-attribute) ([attribution.csv](../examples/inventory/attribution.csv)).
 
 > **It does not edit the observation.** The declaration accumulates in its own lane (`detection_method=UNSPECIFIED`),
 > and combining happens **on the screen at query time**. It fills **only the blanks** without overwriting an app the observation
@@ -78,7 +78,7 @@ include,openssl,libcrypto.so.3,/opt/apps/payment-gw,an exception for the payment
 
 ## ② CBOM intake: import results produced by an external tool
 
-For the runtimes a collector **observes directly**, source and build artifacts are **delegated, not scanned**. pqcota **receives** the standard CycloneDX that CBOMkit produced in the user's CI, and validates, normalizes and loads it. pqcota does not run CBOMkit. → [discovery/README ②](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/discovery/README.md)
+For the runtimes a collector **observes directly**, source and build artifacts are **delegated, not scanned**. pqcota **receives** the standard CycloneDX that CBOMkit produced in the user's CI, and validates, normalizes and loads it. pqcota does not run CBOMkit. → [discovery/README ②](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/README.md)
 
 ### `pqcota-cbom-ingest`
 
@@ -103,7 +103,7 @@ If `env PQCOTA_DSN` is set it persists in Postgres, and if not it only prints an
 > ```bash
 > cbomkit scan ./repo | pqcota-cbom-ingest - cmdb://payment-gw
 > ```
-> CI knows what it is building, so it pins `target-node-id` here (without an anchor it is routed to the scope decision, see [discovery/README](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/discovery/README.md)).
+> CI knows what it is building, so it pins `target-node-id` here (without an anchor it is routed to the scope decision, see [pqcota-discovery README](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/README.md)).
 
 ## ③ Query: read what has accumulated, read-only
 
@@ -161,7 +161,7 @@ Three invariants: **the latest is untouchable** (each node's latest is never del
 
 ## ⑤ Metadata · declaration import
 
-Endpoints are filled by `discovery/cmd/pqcota-hosts --dsn`, and profiles and declarations are filled by the two below. → [the collector and access-prep command map](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/discovery/cmd/README.md)
+Endpoints are filled by `pqcota-hosts --dsn` (pqcota-discovery), and profiles and declarations are filled by the two below. → [the collector and access-prep command map](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/cmd/README.md)
 
 ### `pqcota-profile`
 
