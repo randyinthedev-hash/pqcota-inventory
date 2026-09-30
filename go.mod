@@ -2,7 +2,7 @@ module github.com/randyinthedev-hash/pqcota-inventory
 
 go 1.26.4
 
-require github.com/randyinthedev-hash/pqcota-common v0.0.0-00010101000000-000000000000
+require github.com/randyinthedev-hash/pqcota-common v0.10.0
 
 require (
 	github.com/jackc/pgx/v5 v5.10.0
