@@ -11,7 +11,7 @@ import (
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 )
 
-// TV-HISTORY-7 — Postgres에서 중복 억제가 v1로 접히고, (node, ruleset, digest)로 찾힌다.
+// TV-HISTORY-9 — Postgres에서 중복 억제가 v1로 접히고, (node, ruleset, digest)로 찾힌다.
 // PQCOTA_TEST_DSN이 있을 때만. CI가 Postgres 서비스로 돌린다.
 func TestPgDedupAndLookupOnV1(t *testing.T) {
 	dsn := os.Getenv("PQCOTA_TEST_DSN")

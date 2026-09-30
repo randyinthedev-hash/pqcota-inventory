@@ -79,7 +79,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "✗ no anchor: <target-node-id> must exist in the scope master (§1.4, SD-5)\n")
 		os.Exit(1)
 	default: // Rejected
-		fmt.Fprintf(os.Stderr, "✗ rejected: CBOM validation failed (signature, structure or spec version, TV-CBOM-2)\n")
+		fmt.Fprintf(os.Stderr, "✗ rejected: CBOM validation failed (signature, structure or spec version, TV-CBOM-1)\n")
 		os.Exit(1)
 	}
 }

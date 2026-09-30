@@ -8,7 +8,7 @@ import (
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 )
 
-// TV-HISTORY-CNG — CNG 축이 바뀌면 **변화로 잡혀야 한다**.
+// CNG 축이 바뀌면 **변화로 잡혀야 한다**.
 //
 // ContentHash가 openssl·jca만 보고 있었다(v0.6.0에서 CNG를 더하며 빠뜨렸다). 그 상태에서는
 // 서드파티 provider가 깔려 provider_set이 달라져도 "변화 없음"으로 접혀 이력에서 사라진다 —

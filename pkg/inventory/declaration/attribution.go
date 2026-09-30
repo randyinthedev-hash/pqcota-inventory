@@ -30,7 +30,7 @@ type EdgeAttribution struct {
 //
 // **관측 결과를 고치지 않는다.** 이것은 자기 레인으로 따로 쌓이고(detection_method=UNSPECIFIED),
 // 관측 엣지와 합치는 일은 화면에서 한다 — 적재가 관측을 고치면 collector의 서명과 어긋나고,
-// raw_capture에서 다시 계산할 때 저장된 값과 달라진다(검토 중인 설계 §5.2).
+// raw_capture에서 다시 계산할 때 저장된 값과 달라진다(검토 중인 설계 §7.5).
 func ImportAttributionCSV(r io.Reader) ([]*discoveryv1.CollectionResult, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1

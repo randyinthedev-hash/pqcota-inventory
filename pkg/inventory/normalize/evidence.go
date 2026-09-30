@@ -1,5 +1,5 @@
 // Package normalize — 정규화 파이프라인(규정서 §2.4).
-// 강화·검증·동일성해소가 코어 단독 책임 — Collector는 강화하지 않는다(설계 문서 §3, contracts/README §1).
+// 강화·검증·동일성해소가 코어 단독 책임 — Collector는 강화하지 않는다(디스커버리 설계 §3, contracts/README).
 package normalize
 
 import commonv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/common/v1"
@@ -7,7 +7,7 @@ import commonv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/common/v
 // EvidenceStrength derives the evidence strength from a detection method.
 //
 // 규정서 §2.3 표를 결정론적 함수로 고정한 것으로, evidence_strength의 유일 소스다
-// (설계 문서 §3.2, 파이프라인 ③강화 단계). Collector 출력에는 존재하지 않으며,
+// (디스커버리 설계 §3, 파이프라인 ③강화 단계). Collector 출력에는 존재하지 않으며,
 // 원본(detection_method)에서 항상 재계산 가능해야 한다(규정서 §1.2).
 //
 // 미지정/미지 method는 UNSPECIFIED(=unknown)를 반환한다 — "unknown도 1급 증거"(§2.5).

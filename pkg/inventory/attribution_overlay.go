@@ -10,7 +10,7 @@ import (
 //
 // **저장을 고치지 않는다.** 선언은 자기 레인에 그대로 있고, 관측 엣지도 그대로다. 둘을 합치는
 // 일은 여기서, **읽을 때만** 일어난다 — 적재가 관측을 고치면 collector의 서명과 어긋나고,
-// `raw_capture`에서 다시 계산할 때 저장된 값과 달라진다(검토 중인 설계 §5.2).
+// `raw_capture`에서 다시 계산할 때 저장된 값과 달라진다(검토 중인 설계 §7.5).
 type AttributionOverlay struct {
 	byEdge map[edgeKey]string
 }

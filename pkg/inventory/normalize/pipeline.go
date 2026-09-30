@@ -113,7 +113,7 @@ func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rule
 	return snap, nil
 }
 
-// EdgeIdentity — 엣지 동일성(인벤토리 설계 §6.2 dedup). **안정 필드 전부**다: 방향·주소·포트·
+// EdgeIdentity — 엣지 동일성(인벤토리 설계 §7.3.2). **안정 필드 전부**다: 방향·주소·포트·
 // 프로토콜·역할·탐지 방법·협상 그룹·암호군·앱. 관측 횟수와 시각만 뺀다 — 그 둘은 같은
 // 엣지를 다시 본 사실이지 다른 엣지가 아니다.
 //

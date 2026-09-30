@@ -144,7 +144,7 @@ func RenderDetail(snap *history.Snapshot) string {
 
 // RenderDetailWith — 사람이 선언한 앱을 얹어 낸다. overlay가 nil이면 [RenderDetail]과 같다.
 //
-// 얹는 일은 **읽을 때만** 일어난다 — 저장된 관측 엣지는 그대로다(검토 중인 설계 §5.2).
+// 얹는 일은 **읽을 때만** 일어난다 — 저장된 관측 엣지는 그대로다(검토 중인 설계 §7.5).
 func RenderDetailWith(snap *history.Snapshot, overlay *AttributionOverlay) string {
 	var b strings.Builder
 	b.WriteString(Render(snap))

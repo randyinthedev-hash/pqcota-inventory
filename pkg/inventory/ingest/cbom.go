@@ -15,7 +15,7 @@ type ValidateResult struct {
 	SpecVersion string
 }
 
-// ValidateCBOM — 제출된 CycloneDX의 최소 구조 적합성을 검증한다(TV-CBOM-1/TV-CBOM-2, §5 핸드오프).
+// ValidateCBOM — 제출된 CycloneDX의 최소 구조 적합성을 검증한다(TV-CBOM-1, §5 핸드오프).
 // bomFormat·specVersion을 확인해 부적합 CBOM 등재를 거부한다. 완전 JSON-schema 검증은 후속.
 func ValidateCBOM(raw []byte) ValidateResult {
 	var doc struct {
@@ -46,7 +46,7 @@ const (
 // ImportCBOM — 미리 생성된 CycloneDX를 수신해 관측 레인 Envelope를 부착한다(SV-2·SD-7).
 //
 // 순서: (1) 서명 검증(verifySig, nil이면 생략) → 실패 시 거부(TD-SIGN-2 변조 방지),
-// (2) 구조 검증 → 실패 시 거부(TV-CBOM-2), (3) 스코프 바인딩 확인 → 없으면 판정 요청(TV-CBOM-3),
+// (2) 구조 검증 → 실패 시 거부, (3) 스코프 바인딩 확인 → 없으면 판정 요청,
 // (4) detection_method=ARTIFACT(source/artifact 관측 레인) Envelope 부착 → 등재(TV-CBOM-1).
 //
 // evidence_strength는 코어 강화 단계가 detection_method에서 파생한다(Envelope엔 넣지 않음, §1.2).
