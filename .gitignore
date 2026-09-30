@@ -1,0 +1,6 @@
+# macOS
+.DS_Store
+
+# 빌드 산출물 (gen/ 의 .pb.go는 **커밋한다**)
+build/
+dist/
