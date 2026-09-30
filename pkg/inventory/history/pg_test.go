@@ -76,7 +76,7 @@ func TestPgStore(t *testing.T) {
 	}
 	// 엣지 레인 라운드트립.
 	if len(all[0].Edges) != 1 || all[0].Edges[0].GetNegotiatedGroup() != "X25519MLKEM768" {
-		t.Errorf("the observed edges were not preserved (inventory design §6): %+v", all[0].Edges)
+		t.Errorf("the observed edges were not preserved: %+v", all[0].Edges)
 	}
 	if len(all[1].Edges) != 0 {
 		t.Errorf("a snapshot with no edges must have empty edges: %+v", all[1].Edges)
