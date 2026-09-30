@@ -2,6 +2,7 @@ name: ci
 
 # 이 리포의 검사를 사람이 기억하지 않아도 걸리게 한다. 리포 사이에 걸친 검사(import 방향·게이트 배선·문서 링크의
 # 교차 확인)는 통합 리포 pqcota의 ci.yml이 다섯 리포를 함께 받아 잰다.
+# 아래 cross-stage 작업이 그 통합 검사를 이 리포의 커밋으로 부른다. 단계 하나만 바뀌어도 다섯을 함께 잰다.
 on:
   push:
     branches: [main]
@@ -88,3 +89,11 @@ jobs:
             echo "  없다"
           fi
           exit $status
+
+  # 통합 리포의 검사(import 방향·게이트 배선·문서 링크·단계 사이 테스트)를 이 커밋으로 돌린다.
+  # 나머지 넷은 main이다. 이 작업이 빨개지면 이 변경이 다른 단계나 통합 검사를 깨뜨린다는 뜻이다.
+  cross-stage:
+    uses: randyinthedev-hash/pqcota/.github/workflows/ci.yml@main
+    with:
+      caller: pqcota-inventory
+      ref: ${{ github.sha }}
