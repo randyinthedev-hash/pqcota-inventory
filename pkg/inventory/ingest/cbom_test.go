@@ -9,7 +9,7 @@ import (
 
 const validCBOM = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[]}`
 
-// TV-CBOM-1 (testcases.md §1), TD-SIGN-2 (testcases.md §2). CBOM 수신 어댑터.
+// TV-CBOM-1, TD-SIGN-2. CBOM 수신 어댑터.
 func TestImportCBOM(t *testing.T) {
 	t.Run("valid CBOM with a binding → recorded in the observed lane", func(t *testing.T) {
 		disp, env, reason := ingest.ImportCBOM([]byte(validCBOM), "cmdb://node/1", nil)
