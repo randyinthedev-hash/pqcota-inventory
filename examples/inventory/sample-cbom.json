@@ -1,0 +1,18 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "metadata": {
+    "component": { "type": "application", "name": "payment-gw" }
+  },
+  "components": [
+    {
+      "type": "cryptographic-asset",
+      "name": "bouncycastle-provider",
+      "properties": [
+        { "name": "pqcota:crypto_runtime", "value": "jca" },
+        { "name": "pqcota:jca.provider_set", "value": "SUN,SunJCE,BC" },
+        { "name": "pqcota:app_keys", "value": "/opt/apps/payment-gw" }
+      ]
+    }
+  ]
+}

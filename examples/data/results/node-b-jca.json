@@ -1,0 +1,13 @@
+{
+  "envelope": {
+    "collectorId": "jvm-collector",
+    "collectorVersion": "0.1.0",
+    "targetNodeId": "node-b",
+    "detectionMethod": "DETECTION_METHOD_RUNTIME_INTROSPECTION"
+  },
+  "cbomCyclonedx": "eyJib21Gb3JtYXQiOiAiQ3ljbG9uZURYIiwgInNwZWNWZXJzaW9uIjogIjEuNiIsICJjb21wb25lbnRzIjogW3sidHlwZSI6ICJjcnlwdG9ncmFwaGljLWFzc2V0IiwgIm5hbWUiOiAiamNhLXByb3ZpZGVyLWNoYWluIiwgInByb3BlcnRpZXMiOiBbeyJuYW1lIjogInBxY290YTpjcnlwdG9fcnVudGltZSIsICJ2YWx1ZSI6ICJqY2EifSwgeyJuYW1lIjogInBxY290YTpkZXRlY3Rpb25fbWV0aG9kIiwgInZhbHVlIjogInJ1bnRpbWUtaW50cm9zcGVjdGlvbiJ9LCB7Im5hbWUiOiAicHFjb3RhOmpjYS5wcm92aWRlcl9zZXQiLCAidmFsdWUiOiAiU1VOLFN1bkpDRSxCQyJ9LCB7Im5hbWUiOiAicHFjb3RhOmFwcF9rZXlzIiwgInZhbHVlIjogIi9vcHQvcGF5bWVudHMvYXBwLmphciJ9XX1dfQ==",
+  "cyclonedxSpecVersion": "1.6",
+  "completeness": {
+    "layersCovered": ["COLLECTION_LAYER_PROCESS"]
+  }
+}

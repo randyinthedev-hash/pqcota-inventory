@@ -23,7 +23,7 @@ pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
 | Environment variable | What it does |
 |---|---|
 | `PQCOTA_DSN` | the Postgres connection string ([format](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/discovery/cmd/README.md#pqcota-hosts)). If absent there is only an in-memory summary: nothing is persisted |
-| `PQCOTA_VERIFY_KEY` | public keys (comma separated). If present it verifies the result signatures and refuses a mismatch. The key pair is made by [`pqcota-keygen`](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/discovery/cmd/README.md#pqcota-keygen), and the matching private key is used **by the collector on the node** |
+| `PQCOTA_VERIFY_KEY` | public keys (comma separated). If present it verifies the result signatures and refuses a mismatch. The key pair is made by [`pqcota-keygen`](https://github.com/randyinthedev-hash/pqcota-common/blob/main/cmd/README.md#pqcota-keygen), and the matching private key is used **by the collector on the node** |
 | `PQCOTA_REQUIRE_SIGNATURE` | if `1`, **loading does not start** when there is no key to verify with. If absent, verification is skipped but that count is reported separately as "signature unchecked". It is not put in the same place as a pass |
 | `PQCOTA_ORG` | the organization this load belongs to (lowercase, digits and hyphens, 2–64 characters). If absent it is bound to `default`. **Every command that opens the store has to see the same value**: if the reading side and the writing side differ, the data is there but you cannot see it |
 | `PQCOTA_REQUIRE_ORG` | if `1`, the store cannot be opened without an organization. `default` cannot be used as a name either (it is reserved). For deployments where several organizations share one store: once mixed they cannot be separated again, so it is blocked **at the point of opening** |
@@ -51,7 +51,7 @@ blank that shows as `@?` on the query screen. The operator fills that blank with
 | `dst` | the peer, exactly as printed on the edge: it appears in `pqcota-inventory -snapshot`. **Do not write the port separately**: the contract defines `dst_addr` as `"ip:port"` so it is already there, and writing it in two places lets one go wrong without any warning |
 | `app_key` | the app that opened this edge |
 
-**A sample you can run as it is** is in [examples/inventory](https://github.com/randyinthedev-hash/pqcota/blob/main/examples/inventory/README.md#pqcota-declare-attribution-a-person-writes-the-app-for-an-edge-the-observation-could-not-attribute) ([attribution.csv](https://github.com/randyinthedev-hash/pqcota/blob/main/examples/inventory/attribution.csv)).
+**A sample you can run as it is** is in [examples/inventory](../../examples/inventory/README.md#pqcota-declare-attribution-a-person-writes-the-app-for-an-edge-the-observation-could-not-attribute) ([attribution.csv](../../examples/inventory/attribution.csv)).
 
 > **It does not edit the observation.** The declaration accumulates in its own lane (`detection_method=UNSPECIFIED`),
 > and combining happens **on the screen at query time**. It fills **only the blanks** without overwriting an app the observation

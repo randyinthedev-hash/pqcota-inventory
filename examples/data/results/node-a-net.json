@@ -1,0 +1,15 @@
+{
+  "envelope": {
+    "collectorId": "network-collector",
+    "collectorVersion": "0.1.0",
+    "targetNodeId": "node-a"
+  },
+  "observedEdges": [
+    { "srcNodeId": "node-a", "dstNodeId": "node-b", "protocol": "NETWORK_PROTOCOL_TLS", "negotiatedGroup": "X25519MLKEM768" },
+    { "srcNodeId": "node-a", "dstAddr": "10.0.0.9:443", "protocol": "NETWORK_PROTOCOL_TLS", "negotiatedGroup": "x25519" },
+    { "srcNodeId": "node-a", "dstNodeId": "node-b", "protocol": "NETWORK_PROTOCOL_SSH", "negotiatedGroup": "sntrup761x25519-sha512@openssh.com" }
+  ],
+  "completeness": {
+    "layersCovered": ["COLLECTION_LAYER_NETWORK"]
+  }
+}

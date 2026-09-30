@@ -1,0 +1,13 @@
+{
+  "envelope": {
+    "collectorId": "openssl-collector",
+    "collectorVersion": "0.1.0",
+    "targetNodeId": "node-a",
+    "detectionMethod": "DETECTION_METHOD_RUNTIME_INTROSPECTION"
+  },
+  "cbomCyclonedx": "eyJib21Gb3JtYXQiOiAiQ3ljbG9uZURYIiwgInNwZWNWZXJzaW9uIjogIjEuNiIsICJjb21wb25lbnRzIjogW3sidHlwZSI6ICJjcnlwdG9ncmFwaGljLWFzc2V0IiwgIm5hbWUiOiAibGlic3NsLnNvLjMiLCAicHJvcGVydGllcyI6IFt7Im5hbWUiOiAicHFjb3RhOmNyeXB0b19ydW50aW1lIiwgInZhbHVlIjogIm9wZW5zc2wifSwgeyJuYW1lIjogInBxY290YTpkZXRlY3Rpb25fbWV0aG9kIiwgInZhbHVlIjogInJ1bnRpbWUtaW50cm9zcGVjdGlvbitzeW1ib2wtYW5hbHlzaXMifSwgeyJuYW1lIjogInBxY290YTpvcGVuc3NsLmxpYiIsICJ2YWx1ZSI6ICJsaWJzc2wuc28uMyJ9LCB7Im5hbWUiOiAicHFjb3RhOm9wZW5zc2wuZm9yayIsICJ2YWx1ZSI6ICJPcGVuU1NMIn0sIHsibmFtZSI6ICJwcWNvdGE6b3BlbnNzbC52ZXJzaW9uIiwgInZhbHVlIjogIjMuMC4xMyJ9LCB7Im5hbWUiOiAicHFjb3RhOm9wZW5zc2wuYmluZGluZ19tb2RlIiwgInZhbHVlIjogImR5bmFtaWMifSwgeyJuYW1lIjogInBxY290YTphcHBfa2V5cyIsICJ2YWx1ZSI6ICIvb3B0L2FwcHMvYXBpLWd3LC9vcHQvYXBwcy9wYXltZW50LWd3In1dfV19",
+  "cyclonedxSpecVersion": "1.6",
+  "completeness": {
+    "layersCovered": ["COLLECTION_LAYER_PROCESS"]
+  }
+}

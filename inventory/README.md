@@ -79,4 +79,4 @@ Only **how it was seen** (`detection_method`) is recorded. **Strength (`evidence
 
 ## See also
 
-view, store, and declaration-import libraries [`pkg/inventory/`](../pkg/inventory) · runnable examples [`examples/inventory/`](https://github.com/randyinthedev-hash/pqcota/tree/main/examples/inventory)
+view, store, and declaration-import libraries [`pkg/inventory/`](../pkg/inventory) · runnable examples [`examples/inventory/`](../examples/inventory)

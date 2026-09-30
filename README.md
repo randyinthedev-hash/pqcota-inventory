@@ -10,6 +10,7 @@ It loads collector results into an append-only history, normalizes them into fin
 |---|---|
 | `pkg/inventory/` | the library: `history` (append-only store, in-memory and Postgres), `normalize` (raw capture to derived findings), `ingest`, `resultio`, `declaration`, and the views |
 | `inventory/cmd/` | the commands: `pqcota-ingest`, `pqcota-inventory`, `pqcota-discover-view`, `pqcota-cbom-ingest`, `pqcota-declare`, `pqcota-declare-attribution`, `pqcota-profile`, `pqcota-prune` |
+| `examples/` | runnable examples (`inventory/`: views, declared attribution, CBOM intake) and the shared sample results in `examples/data/` that the discovery examples read too |
 | `inventory/README.md` | what the stage does and how to use it |
 
 ## Depends on
@@ -27,4 +28,4 @@ Until the modules are tagged, `go.mod` points at the sibling repositories with `
 
 ## Contributing · security · license
 
-Contributing and security reporting are described in the [pqcota repository](https://github.com/randyinthedev-hash/pqcota). Licensed under [Apache-2.0](LICENSE).
+Contributing and security reporting are described in the [pqcota repository](https://github.com/randyinthedev-hash/pqcota). Licensed under [Apache-2.0](https://github.com/randyinthedev-hash/pqcota/blob/main/LICENSE).
