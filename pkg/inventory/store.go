@@ -11,7 +11,7 @@ import (
 
 // RenderStore — 히스토리 저장소에 누적된 전 노드의 최신 스냅샷을 읽어 중앙 인벤토리 뷰를 낸다.
 // pqcota-ingest가 적재한 것을 조회 — 파일 취합(휘발성)과 달리 append-only 영속에서 읽는다(§2.4⑥).
-// meta(nil 허용)가 있으면 노드별로 사람-대면 엔드포인트·프로필을 헤더에 곁들인다(§2.0).
+// meta(nil 허용)가 있으면 노드별로 사람-대면 엔드포인트·프로필을 헤더에 곁들인다(인벤토리 설계 §2.0).
 // 여전히 읽기전용·무판단(§2.1). 대조·판정은 하지 않는다.
 func RenderStore(store history.Store, meta MetaStore) (string, error) {
 	nodes, err := store.Nodes()

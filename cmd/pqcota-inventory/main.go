@@ -99,7 +99,7 @@ func run(store history.Store, dsn, histNode, snapID, diffPair string) (string, e
 		return inventory.RenderDiff(a, b), nil
 	}
 
-	// 기본 — 전 노드 최신 누적 뷰. 머신 메타데이터(엔드포인트·프로필)를 헤더에 곁들인다(§2.0).
+	// 기본 — 전 노드 최신 누적 뷰. 머신 메타데이터(엔드포인트·프로필)를 헤더에 곁들인다(인벤토리 설계 §2.0).
 	meta, err := inventory.NewPgMetaStoreIn(context.Background(), dsn, org.FromEnv())
 	if err != nil {
 		return "", fmt.Errorf("metadata store: %w", err)

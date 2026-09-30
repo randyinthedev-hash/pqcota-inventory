@@ -8,7 +8,7 @@ import (
 )
 
 // MetaStore — 머신 메타데이터(엔드포인트·프로필) 저장소. 히스토리(append-only)와 달리 **upsert**한다
-// — 엔드포인트·프로필은 사용자가 재사용·수정하는 가변 메타데이터(§2.0). 접근 비밀은 담기지 않는다.
+// — 엔드포인트·프로필은 사용자가 재사용·수정하는 가변 메타데이터(인벤토리 설계 §2.0). 접근 비밀은 담기지 않는다.
 type MetaStore interface {
 	UpsertEndpoint(*inventoryv1.MachineEndpoint) error
 	UpsertProfile(*inventoryv1.MachineProfile) error

@@ -85,7 +85,7 @@ func opensslResult(node, lib string) *discoveryv1.CollectionResult {
 	}
 }
 
-// TV-SCOPE-7 — 제외는 "없음"이 아니다(§2.6·§8.3). 정책으로 뺀 건수가 적재 요약과 인벤토리
+// TV-SCOPE-7 — 제외는 "없음"이 아니다(규정서 §2.6·인벤토리 설계 §8.3). 정책으로 뺀 건수가 적재 요약과 인벤토리
 // 뷰 **양쪽**에 남아야 한다. 스코프가 알리지 않고 자산을 지우면 인벤토리가 거짓말을 한다.
 func TestIngestReportsScopeExclusions(t *testing.T) {
 	policy, err := scope.LoadAssetPolicy(strings.NewReader(

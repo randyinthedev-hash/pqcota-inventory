@@ -9,7 +9,7 @@ import (
 	inventoryv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/inventory/v1"
 )
 
-// ParseProfiles — 사용자/CMDB가 관리하는 CSV 프로필 파일을 MachineProfile로 읽는다(§2.0 선언·리뷰 레인).
+// ParseProfiles — 사용자/CMDB가 관리하는 CSV 프로필 파일을 MachineProfile로 읽는다(인벤토리 설계 §2.0 선언·리뷰 레인).
 // 헤더 필수(node_id 필수, 나머지 선택·순서 자유). 예:
 //
 //	node_id,display_name,environment,role,owner,location,labels

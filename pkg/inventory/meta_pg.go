@@ -47,7 +47,7 @@ BEGIN
 END $$;
 `
 
-// PgMetaStore — Postgres 머신 메타데이터. node_id PK로 **upsert**한다(사용자 재사용·수정 가능·§2.0).
+// PgMetaStore — Postgres 머신 메타데이터. node_id PK로 **upsert**한다(사용자 재사용·수정 가능·인벤토리 설계 §2.0).
 // 히스토리(append-only)와 다르다. 접근 비밀은 스키마에 없다 — MachineEndpoint 자체가 비밀 필드가 없다.
 //
 // **핸들이 조직에 묶인다** — PgStore와 같은 규칙이다.
