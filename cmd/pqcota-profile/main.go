@@ -14,8 +14,16 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory"
 )
+
+// openMetaStore — 프로필을 쓸 메타 저장소. **PQCOTA_ORG를 읽는다.** 조직 없이 열면 기본 조직에 써서,
+// 조직을 둔 배포에서 조회 쪽(`pqcota-inventory`)이 이 프로필을 못 본다. PQCOTA_REQUIRE_ORG=1이면
+// 조직이 없을 때 열리지 않는다.
+func openMetaStore(ctx context.Context, dsn string) (*inventory.PgMetaStore, error) {
+	return inventory.NewPgMetaStoreIn(ctx, dsn, org.FromEnv())
+}
 
 func main() {
 	dsn := flag.String("dsn", "", "inventory Postgres DSN; when given, upserts profiles")
@@ -44,7 +52,7 @@ func main() {
 	}
 
 	if *dsn != "" {
-		meta, err := inventory.NewPgMetaStore(context.Background(), *dsn)
+		meta, err := openMetaStore(context.Background(), *dsn)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "metadata store:", err)
 			os.Exit(1)
@@ -56,7 +64,7 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "[profile] upserted %d profiles into the inventory\n", len(profs))
+		fmt.Fprintf(os.Stderr, "[profile] upserted %d profiles into the inventory (organization %s)\n", len(profs), meta.Org())
 	}
 }
 

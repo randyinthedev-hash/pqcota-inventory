@@ -172,7 +172,7 @@ pqcota-profile [--dsn <postgres>] <profiles.csv>
 | Argument · option | What it does |
 |---|---|
 | `<profiles.csv>` | machine profiles (`display_name`, `environment`, `role`, `owner`, `location`, `labels`). The source is the CMDB |
-| `--dsn <postgres>` | if given, upserts into the inventory. If not, it only shows the parse result |
+| `--dsn <postgres>` | if given, upserts into the inventory, under the organization named by `PQCOTA_ORG` (the default organization when it is unset). If not, it only shows the parse result |
 
 It is **human-facing metadata** kept separate from identity. It fills the `▸` header of the view.
 
