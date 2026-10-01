@@ -21,5 +21,5 @@ require (
 	google.golang.org/grpc v1.82.1 // indirect
 )
 
-// 로컬 작업 공간에서만 쓰는 연결이다. 모듈에 태그가 붙으면 이 replace를 지우고 require를 그 태그로 올린다.
+// 형제 모듈을 ../ 에서 읽는 로컬 연결이다. replace는 그대로 두고 require는 릴리스 태그를 가리킨다(모듈 밖의 소비자는 replace를 무시하고 그 태그를 받는다).
 replace github.com/randyinthedev-hash/pqcota-common => ../pqcota-common
