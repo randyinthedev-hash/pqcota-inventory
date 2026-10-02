@@ -90,7 +90,7 @@ make            # every check of this repository
 go test ./...   # unit tests only
 ```
 
-`go.mod`는 `replace` 지시자로 형제 리포지터리를 `../`에서 읽으므로(`../pqcota-common` 등) 리포지터리를 나란히 클론하세요. `replace` 줄은 그대로 둡니다. 리포지터리 사이의 로컬 연결이 그것이고, `require` 줄은 릴리스 태그(현재 `v0.10.2`)를 가리키며 이 작업 공간 밖의 사용자가 받는 쪽이 그것입니다. [빌드 안내](https://github.com/randyinthedev-hash/pqcota/blob/main/docs/build.ko.md#소스-받기)를 보세요.
+`go.mod`는 `replace` 지시자로 형제 리포지터리를 `../`에서 읽으므로(`../pqcota-common` 등) 리포지터리를 나란히 클론하세요. `replace` 줄은 그대로 둡니다. 리포지터리 사이의 로컬 연결이 그것이고, `require` 줄은 릴리스 태그(현재 `v0.10.3`)를 가리키며 이 작업 공간 밖의 사용자가 받는 쪽이 그것입니다. [빌드 안내](https://github.com/randyinthedev-hash/pqcota/blob/main/docs/build.ko.md#소스-받기)를 보세요.
 
 ## 함께 보기
 
