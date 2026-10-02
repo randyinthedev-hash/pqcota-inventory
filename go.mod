@@ -2,6 +2,8 @@ module github.com/randyinthedev-hash/pqcota-inventory
 
 go 1.26.4
 
+toolchain go1.26.6
+
 require github.com/randyinthedev-hash/pqcota-common v0.10.3
 
 require (
