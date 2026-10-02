@@ -1,3 +1,5 @@
+English · [한국어](README.ko.md)
+
 # pqcota-inventory — central inventory (stage 2)
 
 **Ingests, persists, and serves** the observations Discovery produced. It accumulates repeated collections into an asset history and attaches machine metadata (endpoints, profiles) and **app attribution**, turning "what uses which cryptographic algorithm, and where" into a queryable inventory.

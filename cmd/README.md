@@ -1,3 +1,5 @@
+English · [한국어](README.ko.md)
+
 # cmd/: the inventory entry points
 
 The CLIs (Go binaries) of the inventory stage. They **load into the center** what the collectors observed, and **read back**, read-only, what has accumulated. They are sorted into five categories.

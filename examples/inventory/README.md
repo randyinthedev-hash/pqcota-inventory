@@ -1,3 +1,5 @@
+English · [한국어](README.ko.md)
+
 # examples/inventory: the read-only inventory view
 
 ```bash
