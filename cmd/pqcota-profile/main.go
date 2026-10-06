@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Command pqcota-profile — CMDB/사용자 프로필 CSV를 인벤토리 머신 프로필로 임포트한다(인벤토리 설계 §2.0).

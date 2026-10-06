@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Command pqcota-cbom-ingest — 외부(CBOMkit 등) CycloneDX CBOM을 수신·검증·적재한다(SV-2·SD-7).

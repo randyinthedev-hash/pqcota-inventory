@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Command pqcota-declare-attribution — 사람이 지정한 **엣지의 앱**을 선언 레인으로 임포트한다.

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Package declaration — 선언 임포터(인벤토리 설계 「선언 임포터」, SV-1).

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Command pqcota-discover-view — OSS 읽기전용 디스커버리 인벤토리 뷰(인벤토리 설계 §1 컴포넌트 아키텍처의 「읽기전용 뷰」).

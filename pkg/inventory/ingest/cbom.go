@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ingest — CBOM 수신 어댑터(위임 수신 설계 「어댑터 명세」, SV-2·SD-7).

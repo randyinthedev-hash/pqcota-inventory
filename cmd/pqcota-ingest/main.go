@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Command pqcota-ingest — 중앙(인벤토리 호스트)에서 실행. 엣지 노드들이 낸 CollectionResult

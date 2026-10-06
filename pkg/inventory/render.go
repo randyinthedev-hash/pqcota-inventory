@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Package inventory — 읽기전용 인벤토리 뷰를 그린다(인벤토리 설계 §1 컴포넌트 아키텍처, Phase 0 산출물).

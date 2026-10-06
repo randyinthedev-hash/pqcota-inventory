@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 randyinthedev
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 # pqcota-inventory — 인벤토리의 빌드·테스트
 # 전제: go(go.mod의 toolchain 이상). 이 리포는 형제 모듈을 go.mod의 replace로 ../ 에서 읽는다(작업 공간 배치).

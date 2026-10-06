@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 // Command pqcota-declare — 사용자 선언 인벤토리(CMDB/CSV)를 선언 레인 CollectionResult로 임포트한다(§2.3, SV-1).
