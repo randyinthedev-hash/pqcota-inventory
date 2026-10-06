@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 randyinthedev
+# SPDX-License-Identifier: Apache-2.0
 name: ci
 
 # 이 리포의 검사를 사람이 기억하지 않아도 걸리게 한다. 리포 사이에 걸친 검사(import 방향·게이트 배선·문서 링크의

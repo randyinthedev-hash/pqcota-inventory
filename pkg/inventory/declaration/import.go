@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Package declaration — 선언 임포터(인벤토리 설계 「선언 임포터」, SV-1).
 // 사용자의 기존 선언 인벤토리(CMDB/CSV)를 선언 레인으로 임포트한다. CBOM 아님(§3.3 선언≠관측).
 package declaration

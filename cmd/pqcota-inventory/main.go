@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Command pqcota-inventory — 중앙에서 실행. pqcota-ingest가 적재한 append-only 히스토리를 읽어
 // 누적 인벤토리(발견 자산 + 관측 엣지 등급)를 조회한다. 읽기전용·무판단(§2.1).
 // 파일 취합(discover-view, 휘발성)과 달리 영속 저장소에서 읽으므로 Postgres가 필요하다.

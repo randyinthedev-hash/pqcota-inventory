@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Command pqcota-cbom-ingest — 외부(CBOMkit 등) CycloneDX CBOM을 수신·검증·적재한다(SV-2·SD-7).
 // 위임 수신(② 위임)의 종단 진입점: 소스·아티팩트를 pqcota가 스캔하지 않고, 사용자 CI가 낸
 // 표준 CycloneDX를 받아 관측 레인(detection_method=source/artifact)으로 히스토리에 적재한다.

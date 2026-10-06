@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Package inventory — 읽기전용 인벤토리 뷰를 그린다(인벤토리 설계 §1 컴포넌트 아키텍처, Phase 0 산출물).
 // 스냅샷의 파생 Finding + 완전성 갭을 사람이 읽는 텍스트로. 판단은 하지 않는다(§2.1).
 package inventory

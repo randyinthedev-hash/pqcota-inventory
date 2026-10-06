@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 randyinthedev
+# SPDX-License-Identifier: Apache-2.0
 # examples/inventory — 회수된 CollectionResult를 읽기전용 인벤토리 뷰로 조회한다(자산·앱 표시·등급).
 # 전제: Go 툴체인만. 저장소·타깃 노드 불필요(파일 취합 모드).
 set -euo pipefail

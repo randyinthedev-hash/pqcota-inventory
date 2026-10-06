@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Command pqcota-ingest — 중앙(인벤토리 호스트)에서 실행. 엣지 노드들이 낸 CollectionResult
 // JSON들을 취합해 스코프 게이트 → 정규화 → append-only 히스토리에 적재한다(§1.4·§2.4⑥).
 // 엣지↔중앙 경계를 넘어온 정규화된 계약을 실제로 "적재"하는 관문 — 데모의 휘발성 뷰를

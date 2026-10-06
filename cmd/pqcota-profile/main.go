@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Command pqcota-profile — CMDB/사용자 프로필 CSV를 인벤토리 머신 프로필로 임포트한다(인벤토리 설계 §2.0).
 // 식별(기계 관측)과 분리된 사람-대면 메타데이터(표시명·환경·역할·소유자·위치·labels) — UI 시각 구분용.
 //

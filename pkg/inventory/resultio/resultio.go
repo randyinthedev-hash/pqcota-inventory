@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Package resultio — 회수된 CollectionResult를 파일에서 읽어 들이는 **공식 디코더**.
 //
 // 한 파일에 결과가 하나일 수도, 여럿일 수도 있다. jvm attach 경로는 노드에서 돌던 JVM마다

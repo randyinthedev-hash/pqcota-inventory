@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Command pqcota-prune — 보존 정책 집행(오래된 변화 지점 절단).
 //
 // **조회 커맨드(pqcota-inventory)와 일부러 분리했다** — 읽기 도구가 파괴적 동작을 겸하면

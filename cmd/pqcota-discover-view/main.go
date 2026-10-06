@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 randyinthedev
+// SPDX-License-Identifier: Apache-2.0
+
 // Command pqcota-discover-view — OSS 읽기전용 디스커버리 인벤토리 뷰(인벤토리 설계 §1 컴포넌트 아키텍처의 「읽기전용 뷰」).
 // 각 노드가 낸 CollectionResult JSON들을 모아 발견 자산(OpenSSL·JCA)과 관측 통신 엣지(등급)를
 // 그대로 보여준다. 선언 대비 3-상태 대조(reconcile)는 하지 않는다.
