@@ -18,7 +18,7 @@ flowchart LR
 
 | Piece | What it is |
 |---|---|
-| **Ingest** — `pqcota-ingest` | normalizes retrieved results and appends them to the history. This is the only write path |
+| **Ingest** — `pqcota-ingest` | normalizes retrieved results and appends them to the history (`pqcota-cbom-ingest` appends CBOMs the same way; only `pqcota-prune` removes) |
 | **History** | a snapshot at every point of change. Append-only, so earlier observations are never overwritten |
 | **Machine metadata** | endpoints and profiles (environment, role, owner). **Access secrets are not persisted** |
 | **Query** — `pqcota-inventory` | latest state, history, and diffs between snapshots. Read-only |
@@ -58,9 +58,10 @@ each other.
 export PQCOTA_ORG=acme PQCOTA_REQUIRE_ORG=1 PQCOTA_REQUIRE_SIGNATURE=1
 ```
 
-All three close a path that would otherwise pass quietly — opening without an organization, accepting
-results without being able to ask about their signature, or creating a schema that was not there and
-writing into it. Details in [cmd/README](cmd/README.md#pqcota-ingest).
+Together these three close two paths that would otherwise pass quietly: opening without an organization,
+and accepting results whose signature cannot be checked. `PQCOTA_AUTO_DDL=0` separately stops the history
+schema from being created where it was not there (the metadata and provisioning-record tables are still
+created). Details in [cmd/README](cmd/README.md#pqcota-ingest).
 
 ## What comes in
 
@@ -74,7 +75,7 @@ writing into it. Details in [cmd/README](cmd/README.md#pqcota-ingest).
 
 The first two are **actually observed, whoever collected them** — the strength just differs; seeing a running process beats reading a build artifact. The third has no observation at all and belongs to a different lane entirely: if written-down assumptions mix with observed facts, you can no longer tell apart "the CMDB says so but it was never observed." That distinction is the baseline for reconciliation.
 
-Only **how it was seen** (`detection_method`) is recorded. **Strength (`evidence_strength`) is not stored — it is recomputed from that every time**, so that when the derivation rule improves, past results are read under the same rule. The full value list is in the [contract](https://github.com/randyinthedev-hash/pqcota-common/blob/main/contracts/data-model.md).
+A result carries only **how it was seen** (`detection_method`). **Strength (`evidence_strength`) is derived from that by one rule (`normalize.EvidenceStrength`) and stored with the snapshot's rule version**, so a value can be recomputed from the original result if you kept it. The full value list is in the [contract](https://github.com/randyinthedev-hash/pqcota-common/blob/main/contracts/data-model.md).
 
 ## What is here
 

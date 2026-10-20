@@ -29,12 +29,12 @@ pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
 | `PQCOTA_REQUIRE_SIGNATURE` | if `1`, **loading does not start** when there is no key to verify with. If absent, verification is skipped but that count is reported separately as "signature unchecked". It is not put in the same place as a pass |
 | `PQCOTA_ORG` | the organization this load belongs to (lowercase, digits and hyphens, 2–64 characters). If absent it is bound to `default`. **Every command that opens the store has to see the same value**: if the reading side and the writing side differ, the data is there but you cannot see it |
 | `PQCOTA_REQUIRE_ORG` | if `1`, the store cannot be opened without an organization. `default` cannot be used as a name either (it is reserved). For deployments where several organizations share one store: once mixed they cannot be separated again, so it is blocked **at the point of opening** |
-| `PQCOTA_AUTO_DDL` | if `0`, the schema is not created. If absent, it stops with an error. It prevents a new empty table from being created and written to when the connection points at the wrong place |
+| `PQCOTA_AUTO_DDL` | if `0`, the history schema is not created; if it is absent, the command stops with an error. The metadata and provisioning-record tables are still created. It prevents a new empty table from being created and written to when the connection points at the wrong place |
 
 > **If `PQCOTA_DSN` is given but the store cannot be opened, it stops.** v0.1.x fell back to in-memory and carried on,
 > and then the screen printed success while the data vanished with the process. Giving a DSN is a request for persistence.
 
-The results of an unregistered node are not thrown away and remain as a **registration request**.
+The result of an unregistered node is refused and not stored; a **refusal entry** (node, collector, reason, content hash) is kept, in the database if one is configured.
 
 ### `pqcota-declare-attribution`
 

@@ -18,7 +18,7 @@ flowchart LR
 
 | 구성 요소 | 하는 일 |
 |---|---|
-| **적재** (`pqcota-ingest`) | 가져온 결과를 정규화해 이력에 추가합니다. 쓰기 경로는 이것 하나뿐입니다 |
+| **적재** (`pqcota-ingest`) | 가져온 결과를 정규화해 이력에 추가합니다(CBOM은 `pqcota-cbom-ingest`가 같은 방식으로 추가하고, 지우는 것은 `pqcota-prune`뿐입니다) |
 | **이력** | 변경 시점마다 남기는 스냅샷입니다. 추가만 가능하므로 이전 관측을 덮어쓰지 않습니다 |
 | **시스템 메타데이터** | 엔드포인트와 프로필(환경, 역할, 소유자)입니다. **접속 비밀 정보는 저장하지 않습니다** |
 | **조회** (`pqcota-inventory`) | 최신 상태, 이력, 스냅샷 사이의 차이를 보여 줍니다. 읽기 전용입니다 |
@@ -55,7 +55,7 @@ pqcota-declare cmdb.csv --out ./declared && pqcota-ingest ./declared   # a CMDB 
 export PQCOTA_ORG=acme PQCOTA_REQUIRE_ORG=1 PQCOTA_REQUIRE_SIGNATURE=1
 ```
 
-세 가지 모두 경고 없이 통과해 버릴 수 있는 경로를 막습니다. 조직 없이 여는 것, 서명을 확인할 수단이 없는데 결과를 받는 것, 없던 스키마를 새로 만들어 거기에 쓰는 것입니다. 자세한 내용은 [cmd/README](cmd/README.ko.md#pqcota-ingest)에 있습니다.
+이 셋은 그대로 두면 경고 없이 지나갈 두 경로를 막습니다. 조직 없이 여는 것과, 서명을 확인할 수 없는 결과를 받는 것입니다. 없던 스키마를 만드는 것은 따로 `PQCOTA_AUTO_DDL=0`이 막는데, 이력 스키마에만 해당합니다(메타데이터와 프로비저닝 기록 테이블은 그래도 만듭니다). 자세한 내용은 [cmd/README](cmd/README.ko.md#pqcota-ingest)에 있습니다.
 
 ## 무엇이 들어오는가
 
@@ -69,7 +69,7 @@ export PQCOTA_ORG=acme PQCOTA_REQUIRE_ORG=1 PQCOTA_REQUIRE_SIGNATURE=1
 
 앞의 둘은 **누가 수집했든 실제로 관측한 것**이고 강도만 다릅니다. 실행 중인 프로세스를 보는 것이 빌드 산출물을 읽는 것보다 강합니다. 셋째는 관측이 전혀 없는 다른 레인입니다. 적어 둔 가정이 관측한 사실과 섞이면 "CMDB에는 그렇게 적혀 있지만 관측된 적은 없다"를 더는 구분할 수 없게 됩니다. 그 구분이 대조(reconcile)의 기준선입니다.
 
-기록하는 것은 **어떻게 보았는가**(`detection_method`)뿐입니다. **강도(`evidence_strength`)는 저장하지 않고 그 값에서 매번 다시 계산합니다.** 도출 규칙이 개선되면 과거 결과도 같은 규칙으로 읽게 하려는 것입니다. 값의 전체 목록은 [계약](https://github.com/randyinthedev-hash/pqcota-common/blob/main/contracts/data-model.ko.md)에 있습니다.
+결과에 담기는 것은 **어떻게 보았는가**(`detection_method`)뿐입니다. **강도(`evidence_strength`)는 그 값에서 한 규칙(`normalize.EvidenceStrength`)으로 도출해 스냅샷의 규칙 버전과 함께 저장합니다.** 원본 결과를 보관했다면 다시 계산할 수 있습니다. 값의 전체 목록은 [계약](https://github.com/randyinthedev-hash/pqcota-common/blob/main/contracts/data-model.ko.md)에 있습니다.
 
 ## 들어 있는 것
 
