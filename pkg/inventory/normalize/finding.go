@@ -64,6 +64,7 @@ func DeriveFindings(res *discoveryv1.CollectionResult, snapshotID, rulesetVersio
 				Fork:        props["pqcota:openssl.fork"],
 				Version:     props["pqcota:openssl.version"],
 				BindingMode: parseBindingMode(props["pqcota:openssl.binding_mode"]),
+				Path:        props["pqcota:openssl.path"],
 			}}
 		case commonv1.CryptoRuntime_CRYPTO_RUNTIME_JCA:
 			providerSet := splitCSV(props["pqcota:jca.provider_set"])
@@ -93,12 +94,21 @@ func DeriveFindings(res *discoveryv1.CollectionResult, snapshotID, rulesetVersio
 }
 
 // findingID — finding 동일성 정규화 해시(§2.4⑤ dedup 앵커). 노드+컴포넌트+런타임+fork 기반.
+//
+// OpenSSL은 라이브러리 경로가 있으면 그것도 넣는다. 컴포넌트 이름은 파일 이름뿐이라, 경로가 없으면
+// 시스템의 libssl.so.3과 앱이 번들한 libssl.so.3이 한 id가 되고 정규화가 하나만 남겼다(v0.10.5까지).
+// 경로가 없는 입력(외부 CBOM 등)은 전과 같은 id다 — 경로를 지어내지 않는다. 판은 넣지 않는다:
+// 같은 경로에서 판이 바뀐 것은 같은 자산의 변경이다.
 func findingID(node, name string, props map[string]string) string {
-	key := strings.Join([]string{
+	parts := []string{
 		node, name,
 		props["pqcota:crypto_runtime"],
 		props["pqcota:openssl.fork"],
-	}, "|")
+	}
+	if p := props["pqcota:openssl.path"]; p != "" && props["pqcota:crypto_runtime"] == "openssl" {
+		parts = append(parts, p)
+	}
+	key := strings.Join(parts, "|")
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
 }

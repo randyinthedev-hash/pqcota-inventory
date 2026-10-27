@@ -37,7 +37,11 @@ import (
 // v2 — 노드별 병합이 결정론적이 됐다. 결과를 시각·수집기·내용순으로 정렬하고, 같은 finding은
 // 내용이 다르면 최근 것을 남기며 알리고, 엣지 동일성이 안정 필드 전부가 됐고, 완전성의 계층은
 // 정렬하고 note는 전부 잇는다. 같은 입력에서 v1과 다른 스냅샷이 나오므로 판을 올렸다.
-const RulesetVersion = "pqcota-enrich/v2"
+//
+// v3 — OpenSSL finding id에 라이브러리 경로가 들어갔다(경로가 있는 입력만). 파일 이름이 같은 설치본
+// 둘이 이제 둘로 남는다. 같은 관측에서 v2와 다른 id가 나오므로 판을 올렸다 — 올린 뒤 첫 비교에서
+// OpenSSL 자산이 「사라짐」과 「추가」로 한 번 나온다. 실제 변화가 아니다.
+const RulesetVersion = "pqcota-enrich/v3"
 
 func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rulesetVersion string,
 	store history.Store, policy *scope.AssetPolicy) (*history.Snapshot, error) {
@@ -48,6 +52,7 @@ func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rule
 
 	byID := make(map[string]int) // finding id → findings의 자리
 	var findings []*discoveryv1.Finding
+	fromCollector := make(map[string]string) // finding id → 그것을 낸 수집기(겹침의 원인을 바로 적기 위해)
 	var comp *commonv1.Completeness
 	var conflicts []string
 
@@ -61,18 +66,30 @@ func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rule
 		}
 		for _, f := range fs {
 			i, dup := byID[f.GetId()]
+			collector := res.GetEnvelope().GetCollectorId()
 			if !dup {
 				byID[f.GetId()] = len(findings)
 				findings = append(findings, f)
+				fromCollector[f.GetId()] = collector
 				continue
 			}
 			// 같은 finding id가 두 결과에 있다(§2.4⑤ dedup). 내용이 같으면 하나다. 다르면
 			// **최근 것**을 남기되 **알리지 않고 고르지 않는다** — 두 수집기가 같은 자산을 다르게 봤다는
 			// 사실은 완전성 note에 남아 사람이 본다.
+			//
+			// 같은 수집기 안에서 겹쳤다면 원인이 다르다. 수집기끼리 본 것이 다른 게 아니라, 서로 다른
+			// 두 자산이 한 id를 받은 것이다(식별 규칙이 둘을 못 가른다). 「수집기끼리 다르다」고 적으면
+			// 원인을 잘못 안내한다(v0.10.5까지 그랬다).
 			if !proto.Equal(findings[i], f) {
-				conflicts = append(conflicts, fmt.Sprintf("finding %s differs between collectors; kept the most recent (%s)",
-					f.GetId(), res.GetEnvelope().GetCollectorId()))
+				if fromCollector[f.GetId()] == collector {
+					conflicts = append(conflicts, fmt.Sprintf("finding %s: %s reported two different assets under one identity; kept the most recent — the identity rule could not tell them apart",
+						f.GetId(), collector))
+				} else {
+					conflicts = append(conflicts, fmt.Sprintf("finding %s differs between collectors; kept the most recent (%s)",
+						f.GetId(), collector))
+				}
 				findings[i] = f
+				fromCollector[f.GetId()] = collector
 			}
 		}
 		// 관측 통신 엣지(network-collector, 인벤토리 설계 §6)도 스냅샷 관측 레인에 싣는다. 노드 내부 자산과 별도.
@@ -89,6 +106,7 @@ func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rule
 		}
 		comp = mergeCompleteness(comp, res.GetCompleteness())
 	}
+	conflicts = append(conflicts, pathlessOverlaps(findings)...)
 	if len(conflicts) > 0 {
 		comp = mergeCompleteness(comp, &commonv1.Completeness{Note: strings.Join(conflicts, "; ")})
 	}
@@ -227,5 +245,24 @@ func keys(m map[commonv1.CollectionLayer]bool) []commonv1.CollectionLayer {
 		out = append(out, k)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// pathlessOverlaps — 경로가 없는 OpenSSL finding(외부 CBOM 등)이 같은 노드에서 경로가 있는 finding과
+// 파일 이름이 같으면 알린다. 둘은 id가 달라 따로 남는다. 같은 설치본을 두 입력이 각각 말한 것인지,
+// 다른 설치본인지는 경로가 없는 쪽만으로는 가를 수 없다 — 합치지도 버리지도 않고 사람이 보게 둔다.
+func pathlessOverlaps(fs []*discoveryv1.Finding) []string {
+	withPath := map[string]bool{} // 파일 이름 → 경로 있는 finding이 있다
+	for _, f := range fs {
+		if o := f.GetOpenssl(); o != nil && o.GetPath() != "" {
+			withPath[o.GetLib()] = true
+		}
+	}
+	var out []string
+	for _, f := range fs {
+		if o := f.GetOpenssl(); o != nil && o.GetPath() == "" && withPath[o.GetLib()] {
+			out = append(out, fmt.Sprintf("finding %s (%s) has no path, and an observed %s with a path is on this node too — they may be one installation reported twice, or two installations", f.GetId(), o.GetLib(), o.GetLib()))
+		}
+	}
 	return out
 }
