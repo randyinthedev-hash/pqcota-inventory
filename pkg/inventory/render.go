@@ -199,7 +199,7 @@ func RenderDiff(a, b *history.Snapshot) string {
 		a.CreatedAt.Format("2006-01-02 15:04:05"), a.Seq, a.RulesetVersion,
 		b.CreatedAt.Format("2006-01-02 15:04:05"), b.Seq, b.RulesetVersion)
 	if a.RulesetVersion != b.RulesetVersion {
-		sb.WriteString("⚠ the rulesets differ — a difference in derived values (evidence, pqc_readiness) may be a recomputation, not a real change (§1.2). When the identity rule changed too, an asset shows once as removed and added (see the release notes).\n\n")
+		sb.WriteString("⚠ the rulesets differ — a difference in derived values (evidence, pqc_readiness) may be a recomputation, not a real change (§1.2). When the identity rule changed too, removed and added may include its effect — do not read them alone as an installation removed or added (see the release notes).\n\n")
 	}
 	// 방향 규약: 첫 인자=과거, 둘째=최신. '추가'=둘째에만·'사라짐'=첫째에만이라, 인자를 시간
 	// 역순으로 주면 방향이 뒤집혀 읽힌다 — 하드 에러는 아니다(되돌림 미리보기로 역순 비교가

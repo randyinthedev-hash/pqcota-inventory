@@ -131,15 +131,30 @@ func TestPathlessAndObservedBothKeptAndNoted(t *testing.T) {
 	}
 }
 
-// 한 수집기 안에서 두 자산이 한 id로 겹치면, 원인을 「수집기끼리 다르다」가 아니라 식별 규칙으로 적는다.
-// (경로 없는 입력 두 개로 겹침을 만든다. JCA의 같은 이름 JVM 둘도 이 문구로 나온다.)
-func TestSameCollectorOverlapNamesTheCause(t *testing.T) {
+// 한 수집기가 한 id에 다른 내용을 보고하면, 「수집기끼리 다르다」라고도, 「두 자산」이라고도 단정하지 않는다.
+// 확인된 사실(한 수집기, 한 id, 다른 내용, 최근 것을 남김)만 적는다.
+func TestSameCollectorConflictIsStatedNeutrally(t *testing.T) {
 	snap := normalizeOne(t, sslResult("external", 1, sslComp{"", "3.0.13", "a"}, sslComp{"", "3.5.5", "b"}))
 	n := snap.Completeness.GetNote()
-	if strings.Contains(n, "differs between collectors") {
-		t.Errorf("one collector, yet the note blames collectors: %q", n)
+	if strings.Contains(n, "differs between collectors") || strings.Contains(n, "two different assets") {
+		t.Errorf("the note asserts a cause it cannot know: %q", n)
 	}
-	if !strings.Contains(n, "two different assets under one identity") {
-		t.Errorf("the note does not name the identity rule as the cause: %q", n)
+	if !strings.Contains(n, "external reported different content for one identity; kept the most recent") {
+		t.Errorf("the note does not state what happened: %q", n)
+	}
+}
+
+// 같은 설치본을 다른 시점에 본 두 결과를 한 번에 정규화하면(결과 디렉터리에 두 번의 수집), 최근 것이
+// 남고 노트는 중립 문구다. 이 경우가 「두 자산」이 아니라는 것이 위 문구를 중립으로 둔 까닭이다.
+func TestSamePathTwoTimesInOneBatch(t *testing.T) {
+	const p = "/usr/lib/x86_64-linux-gnu/libssl.so.3"
+	snap := normalizeOne(t,
+		sslResult("openssl-collector", 2, sslComp{p, "3.0.15", "nginx.service"}),
+		sslResult("openssl-collector", 1, sslComp{p, "3.0.13", "nginx.service"}))
+	if len(snap.Findings) != 1 || snap.Findings[0].GetOpenssl().GetVersion() != "3.0.15" {
+		t.Fatalf("want the one installation at its latest version, got %d findings: %v", len(snap.Findings), snap.Findings)
+	}
+	if n := snap.Completeness.GetNote(); !strings.Contains(n, "reported different content for one identity; kept the most recent") {
+		t.Errorf("note: %q", n)
 	}
 }

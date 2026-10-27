@@ -39,8 +39,9 @@ import (
 // 정렬하고 note는 전부 잇는다. 같은 입력에서 v1과 다른 스냅샷이 나오므로 판을 올렸다.
 //
 // v3 — OpenSSL finding id에 라이브러리 경로가 들어갔다(경로가 있는 입력만). 파일 이름이 같은 설치본
-// 둘이 이제 둘로 남는다. 같은 관측에서 v2와 다른 id가 나오므로 판을 올렸다 — 올린 뒤 첫 비교에서
-// OpenSSL 자산이 「사라짐」과 「추가」로 한 번 나온다. 실제 변화가 아니다.
+// 둘이 이제 둘로 남는다. 같은 관측에서 v2와 다른 id가 나오므로 판을 올렸다. 그래서 v2 스냅샷과 v3
+// 스냅샷을 비교하면 「사라짐」·「추가」에 식별 규칙 변경의 영향이 섞일 수 있다 — 그것만으로 설치본이
+// 없어지거나 생겼다고 읽으면 안 된다.
 const RulesetVersion = "pqcota-enrich/v3"
 
 func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rulesetVersion string,
@@ -77,12 +78,12 @@ func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rule
 			// **최근 것**을 남기되 **알리지 않고 고르지 않는다** — 두 수집기가 같은 자산을 다르게 봤다는
 			// 사실은 완전성 note에 남아 사람이 본다.
 			//
-			// 같은 수집기 안에서 겹쳤다면 원인이 다르다. 수집기끼리 본 것이 다른 게 아니라, 서로 다른
-			// 두 자산이 한 id를 받은 것이다(식별 규칙이 둘을 못 가른다). 「수집기끼리 다르다」고 적으면
-			// 원인을 잘못 안내한다(v0.10.5까지 그랬다).
+			// 같은 수집기 안에서 겹쳤다면 「수집기끼리 다르다」가 아니다(v0.10.5까지 그렇게 적었다).
+			// 그렇다고 원인을 단정하지도 않는다. 식별 규칙이 못 가른 두 자산일 수도 있고, 같은 설치본을
+			// 다른 시점에 본 두 결과(판·앱이 바뀜)일 수도 있다. 확인된 사실만 적는다.
 			if !proto.Equal(findings[i], f) {
 				if fromCollector[f.GetId()] == collector {
-					conflicts = append(conflicts, fmt.Sprintf("finding %s: %s reported two different assets under one identity; kept the most recent — the identity rule could not tell them apart",
+					conflicts = append(conflicts, fmt.Sprintf("finding %s: %s reported different content for one identity; kept the most recent",
 						f.GetId(), collector))
 				} else {
 					conflicts = append(conflicts, fmt.Sprintf("finding %s differs between collectors; kept the most recent (%s)",
