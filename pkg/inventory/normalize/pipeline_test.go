@@ -82,11 +82,22 @@ func TestDeriveFindings_MultiApp(t *testing.T) {
 }
 
 func jcaResult(node, providerSet string) *discoveryv1.CollectionResult {
+	return jcaResultServices(node, providerSet, "")
+}
+
+// jcaResultServices — pqc_services(`provider=알고리즘|알고리즘` CSV)까지 실은 JCA 결과. 비면 그 속성을
+// 싣지 않는다 — 수집기가 서비스를 보지 않은 경우다.
+func jcaResultServices(node, providerSet, services string) *discoveryv1.CollectionResult {
+	sprop := ""
+	if services != "" {
+		sprop = `,
+        {"name":"pqcota:jca.pqc_services","value":"` + services + `"}`
+	}
 	cbom := []byte(`{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
       {"type":"cryptographic-asset","name":"jca-provider-chain","properties":[
         {"name":"pqcota:crypto_runtime","value":"jca"},
         {"name":"pqcota:detection_method","value":"runtime-introspection"},
-        {"name":"pqcota:jca.provider_set","value":"` + providerSet + `"}]}]}`)
+        {"name":"pqcota:jca.provider_set","value":"` + providerSet + `"}` + sprop + `]}]}`)
 	return &discoveryv1.CollectionResult{
 		Envelope:      &commonv1.Envelope{TargetNodeId: node},
 		CbomCyclonedx: cbom,
@@ -94,7 +105,7 @@ func jcaResult(node, providerSet string) *discoveryv1.CollectionResult {
 }
 
 func TestDeriveFindings_JCA(t *testing.T) {
-	// BC 포함 → 전 표준 알고리즘 커버, SLH-DSA 갭 없음.
+	// BC 포함, 서비스 미관측 → 레지스트리대로 전 표준 알고리즘. 판을 가리지 않는 기존 동작이다.
 	fs, _ := normalize.DeriveFindings(jcaResult("cmdb://j1", "SUN,BC"), "s", "r")
 	f := fs[0]
 	if f.GetCryptoRuntime() != commonv1.CryptoRuntime_CRYPTO_RUNTIME_JCA {
@@ -104,13 +115,83 @@ func TestDeriveFindings_JCA(t *testing.T) {
 		t.Errorf("provider_set = %v", f.GetJca().GetProviderSet())
 	}
 	if f.GetPqcReadiness() != "provider-augmented (all standard algorithms)" {
-		t.Errorf("pqc_readiness = %q (BC does cover SLH-DSA)", f.GetPqcReadiness())
+		t.Errorf("pqc_readiness = %q (the registry lists SLH-DSA for BC)", f.GetPqcReadiness())
 	}
 
-	// JDK 네이티브만(SunJCE) → SLH-DSA 갭.
+	// JDK 네이티브만, 서비스 미관측 → 세지 않는다. 이름으로는 21.0.12(없음)와 21.0.13(있음)을 가를 수 없다.
 	fs2, _ := normalize.DeriveFindings(jcaResult("cmdb://j2", "SUN,SunJCE"), "s", "r")
-	if got := fs2[0].GetPqcReadiness(); got != "provider-augmented (SLH-DSA gap)" {
-		t.Errorf("pqc_readiness = %q, want the SLH-DSA gap", got)
+	if got := fs2[0].GetPqcReadiness(); got != "unknown" {
+		t.Errorf("pqc_readiness = %q, want unknown (JDK-native support is not credited from names)", got)
+	}
+}
+
+// 2026-10-30 실측 체인(Temurin 21.0.11·21.0.13·25.0.5, 프로브). 판은 모두 기능 판("21"·"25")이고, 서비스 목록만 다르다.
+const (
+	jdkChain    = "SUN,SunRsaSign,SunEC,SunJSSE,SunJCE,SunJGSS,SunSASL,XMLDSig,SunPCSC,JdkLDAP,JdkSASL,SunPKCS11"
+	jdkNoPQC    = "SUN=,SunRsaSign=,SunEC=,SunJSSE=,SunJCE=,SunJGSS=,SunSASL=,XMLDSig=,SunPCSC=,JdkLDAP=,JdkSASL=,SunPKCS11="
+	jdkSUN      = "SUN=ML-DSA|ML-DSA-44|ML-DSA-65|ML-DSA-87"
+	jdkSunJCE   = "SunJCE=ML-KEM|ML-KEM-1024|ML-KEM-512|ML-KEM-768"
+	jdkWithPQC  = jdkSUN + ",SunRsaSign=,SunEC=,SunJSSE=," + jdkSunJCE + ",SunJGSS=,SunSASL=,XMLDSig=,SunPCSC=,JdkLDAP=,JdkSASL=,SunPKCS11="
+	bcWithAll   = "BC=ML-DSA|ML-KEM|SLH-DSA-SHA2-128F"
+	bcPreStdPQC = "BC=KYBER512|DILITHIUM2|SPHINCSPLUS"
+)
+
+// JCA readiness는 provider가 등록한 PQC 서비스를 센다. 2026-10-30 시연(pay-app, Temurin 21.0.11, BC 없음)의
+// diff에 `provider-augmented (SLH-DSA gap)`이 나왔지만 그 JVM에는 ML-KEM 서비스가 등록돼 있지 않았다. 실측
+// (Temurin)에서 21.0.11·21.0.12에는 없고 21.0.13(백포트)·24.0.2·25.0.5에는 SunJCE의 ML-KEM과 SUN의 ML-DSA가
+// 있었다. SunEC는 어느 판에서도 둘 다 등록하지 않았다.
+func TestDeriveFindings_JCAObservedServices(t *testing.T) {
+	cases := []struct {
+		name, set, services, want string
+	}{
+		{"Temurin 21.0.11 (demo pay-app), no BC", jdkChain, jdkNoPQC, "none (no standard PQC service observed)"},
+		{"Temurin 21.0.13 backport, no BC", jdkChain, jdkWithPQC, "provider-augmented (SLH-DSA gap)"},
+		{"Temurin 25.0.5, no BC", jdkChain, jdkWithPQC, "provider-augmented (SLH-DSA gap)"},
+		// provider 하나씩: 체인 전체로는 같아 보여도 누가 무엇을 서비스하는지가 맞아야 한다.
+		{"SunEC only", "SunEC", "SunEC=", "none (no standard PQC service observed)"},
+		{"SUN only", "SUN", jdkSUN, "partial (only ML-DSA observed)"},
+		{"SunJCE only", "SunJCE", jdkSunJCE, "partial (only ML-KEM observed)"},
+		// 서비스가 있는데 체인에 없는 provider의 것은 세지 않는다.
+		{"services of a provider outside the chain", "SunEC", "SunEC=," + jdkSunJCE, "none (no standard PQC service observed)"},
+		// 일부만 관측한 체인. 속성에 키가 없는 provider는 「봤는데 없다」가 아니라 「보지 않았다」다.
+		{"every provider observed, all empty", "SUN,SunJCE", "SUN=,SunJCE=", "none (no standard PQC service observed)"},
+		{"SUN observed empty, SunJCE not observed", "SUN,SunJCE", "SUN=", "unknown"},
+		{"SUN observed with ML-DSA, SunJCE not observed", "SUN,SunJCE", jdkSUN, "partial (only ML-DSA observed)"},
+		// 관측하지 않은 BC는 레지스트리의 이름 대조로 센다(기존 동작). 서비스 목록을 본 것이 아니다.
+		{"JDK observed empty, BC not observed (registry by name)", jdkChain + ",BC", jdkNoPQC, "provider-augmented (all standard algorithms)"},
+		{"Temurin 21.0.11 + BC serving all three", jdkChain + ",BC", jdkNoPQC + "," + bcWithAll, "provider-augmented (all standard algorithms)"},
+		// 표준 이전 이름(Kyber 등)은 표준 PQC 서비스로 세지 않는다.
+		{"BC with pre-standard names only", jdkChain + ",BC", jdkNoPQC + "," + bcPreStdPQC, "none (no standard PQC service observed)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs, err := normalize.DeriveFindings(jcaResultServices("cmdb://pay", c.set, c.services), "s", "r")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := fs[0].GetPqcReadiness(); got != c.want {
+				t.Errorf("pqc_readiness = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// 서비스를 보지 않은 입력(정적 폴백, 옛 수집기)은 JDK 기본 제공 provider를 세지 않는다. BC 등은 판을 가리지
+// 않고 레지스트리대로 센다 — 기존 동작을 유지한 것이지 그 판의 서비스 목록을 확인한 것이 아니다.
+func TestDeriveFindings_JCAServicesNotObserved(t *testing.T) {
+	cases := []struct {
+		name, set, want string
+	}{
+		{"JDK chain only", jdkChain, "unknown"},
+		{"JDK chain + BC (existing registry behaviour, no version condition)", jdkChain + ",BC", "provider-augmented (all standard algorithms)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs, _ := normalize.DeriveFindings(jcaResult("cmdb://pay", c.set), "s", "r")
+			if got := fs[0].GetPqcReadiness(); got != c.want {
+				t.Errorf("pqc_readiness = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

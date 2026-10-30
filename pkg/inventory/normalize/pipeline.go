@@ -42,6 +42,11 @@ import (
 // 둘이 이제 둘로 남는다. 같은 관측에서 v2와 다른 id가 나오므로 판을 올렸다. 그래서 v2 스냅샷과 v3
 // 스냅샷을 비교하면 「사라짐」·「추가」에 식별 규칙 변경의 영향이 섞일 수 있다 — 그것만으로 설치본이
 // 없어지거나 생겼다고 읽으면 안 된다.
+//
+// v3에는 JCA readiness 규칙 변경도 들어갔다. provider가 실제로 서비스하는 PQC 알고리즘(jvm collector의
+// `pqcota:jca.pqc_services`)을 provider마다 세고, 보지 않은 provider가 JDK 기본 제공이면 세지 않는다. v2는
+// 이름만 봐서 ML-KEM 서비스가 없던 Temurin 21.0.11 체인도 `provider-augmented (SLH-DSA gap)`으로 적었다.
+// finding id는 그대로이고 readiness 값만 바뀐다. 새 값 `none (…)`·`partial (…)`이 생겼다.
 const RulesetVersion = "pqcota-enrich/v3"
 
 func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rulesetVersion string,

@@ -73,7 +73,7 @@ func DeriveFindings(res *discoveryv1.CollectionResult, snapshotID, rulesetVersio
 				RegistrationMode: parseRegistrationMode(props["pqcota:jca.registration_mode"]),
 			}}
 			// provider 시그니처 레지스트리 강화(수용 원칙 §2.3 · 프로비저닝 설계 §4.2): FIPS·SLH-DSA 갭.
-			f.FipsValidation, f.PqcReadiness = jcaEnrichment(providerSet)
+			f.FipsValidation, f.PqcReadiness = jcaEnrichment(providerSet, jcaServices(props["pqcota:jca.pqc_services"]))
 		case commonv1.CryptoRuntime_CRYPTO_RUNTIME_WIN_CNG:
 			// CNG는 JCA와 같은 provider 축이다(수용 원칙 §2.1). provider 이름만으로는
 			// "이 노드가 ML-DSA를 할 수 있나"에 답할 수 없어(실측: provider 9개가 전부
@@ -187,29 +187,81 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// jcaServices — `provider=알고리즘|알고리즘` CSV(jvm collector의 pqc_services)를 provider → 알고리즘으로.
+// **키가 있는지가 관측했는지다.** `SunEC=`처럼 빈 항목은 봤는데 없던 것이고, 키가 없는 provider는 보지
+// 않은 것이다(속성이 아예 없거나, 옛 출력과 섞였거나, 외부 CBOM이 일부만 적었다).
+func jcaServices(s string) map[string][]string {
+	out := map[string][]string{}
+	for _, part := range splitCSV(s) {
+		name, algs, _ := strings.Cut(part, "=")
+		var list []string
+		for _, a := range strings.Split(algs, "|") {
+			if a = strings.TrimSpace(a); a != "" {
+				list = append(list, a)
+			}
+		}
+		out[strings.TrimSpace(name)] = list
+	}
+	return out
+}
+
 // jcaEnrichment — provider_set을 시그니처 레지스트리와 대조해 fips_validation·pqc_readiness를
 // 파생한다(수용 원칙 §2.3 · 프로비저닝 설계 §4.2). SLH-DSA는 JDK 네이티브에 없으므로 갭을 명시한다.
-func jcaEnrichment(providers []string) (fips, readiness string) {
+//
+// **판정이 아니라 관측의 요약이다**(아키텍처 §6). 관측한 것은 provider가 등록한 서비스 목록이다 — 그
+// 알고리즘으로 연산이 되는지, 실제 통신에서 쓰이는지는 재지 않는다.
+//
+// provider마다 따로 센다.
+//   - 서비스를 관측한 provider: 서비스하는 표준 PQC 계열(ML-KEM·ML-DSA·SLH-DSA)만 센다. 이름이나 판으로는
+//     알 수 없기 때문이다 — Temurin 21.0.13은 백포트로 ML-KEM·ML-DSA를 등록하고 21.0.12는 등록하지 않는데,
+//     provider 판은 둘 다 "21"이다(2026-10-30 실측). v3 전에는 이름만 봐서 Temurin 21.0.11 체인도
+//     `provider-augmented (SLH-DSA gap)`으로 적었다.
+//   - 관측하지 않은 provider: 이름으로 레지스트리와 대조하되 jdk-builtin은 세지 않는다. 그 밖의 provider(BC 등)는
+//     **판을 가리지 않고 레지스트리대로 센다** — 기존 동작을 유지한 것이고, 서비스 목록을 본 것이 아니다.
+//
+// 요약: 센 계열이 있으면 그것으로 적는다. 하나도 없을 때 `none`은 **체인의 provider를 모두 관측했을 때만**
+// 쓴다. 하나라도 보지 않았으면 `unknown`이다 — 보지 않은 provider가 무엇을 등록했는지 모른다.
+// readiness 문자열은 센 근거(관측인지 이름 대조인지)를 담지 않는다.
+func jcaEnrichment(providers []string, services map[string][]string) (fips, readiness string) {
 	fips = "none"
-	hasMLKEM, hasSLHDSA := false, false
+	has := map[string]bool{}
+	allObserved := true
 	for _, name := range providers {
-		if sig, ok := registry.MatchProvider(name, registry.DefaultProviderSignatures); ok {
-			if sig.FipsValidation == "140-3" {
-				fips = "140-3"
+		sig, ok := registry.MatchProvider(name, registry.DefaultProviderSignatures)
+		if ok && sig.FipsValidation == "140-3" {
+			fips = "140-3"
+		}
+		if algs, observed := services[name]; observed {
+			for _, a := range algs {
+				if pqc, ok := registry.MatchPQC(a); ok && pqc.FIPSValidatable() {
+					has[pqc.Family] = true
+				}
 			}
-			if sig.Covers("ML-KEM") {
-				hasMLKEM = true
-			}
-			if sig.Covers("SLH-DSA") {
-				hasSLHDSA = true
+			continue
+		}
+		allObserved = false
+		if ok && sig.Nature != "jdk-builtin" {
+			for _, fam := range sig.PQCAlgorithms {
+				has[fam] = true
 			}
 		}
 	}
+
+	var fams []string // 표기 순서를 고정한다(같은 입력 → 같은 문자열)
+	for _, fam := range []string{"ML-KEM", "ML-DSA", "SLH-DSA"} {
+		if has[fam] {
+			fams = append(fams, fam)
+		}
+	}
 	switch {
-	case hasMLKEM && hasSLHDSA:
+	case len(fams) == 3:
 		readiness = "provider-augmented (all standard algorithms)"
-	case hasMLKEM && !hasSLHDSA:
+	case has["ML-KEM"] && has["ML-DSA"]:
 		readiness = "provider-augmented (SLH-DSA gap)"
+	case len(fams) > 0:
+		readiness = "partial (only " + strings.Join(fams, ", ") + " observed)"
+	case allObserved && len(providers) > 0:
+		readiness = "none (no standard PQC service observed)"
 	default:
 		readiness = "unknown"
 	}
