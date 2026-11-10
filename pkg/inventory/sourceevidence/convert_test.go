@@ -216,3 +216,129 @@ func TestEmptyAndNoComponents(t *testing.T) {
 		t.Fatalf("items should serialize as [] not null: %s", j)
 	}
 }
+
+// 문서 뒤에는 공백만 허용한다. 잘못된 글자도 「뒤에 붙은 내용」이다(검토 11/10: x·tru·]가 통과했다).
+func TestTrailingContent(t *testing.T) {
+	base := `{"bomFormat":"CycloneDX","specVersion":"1.6"}`
+	for _, tail := range []string{" x", "tru", "]", "{}", " 1", `"s"`, ",", "\x00"} {
+		if _, err := Convert([]byte(base+tail), DefaultLimits); !errors.Is(err, ErrTrailingContent) {
+			t.Errorf("tail %q: err %v, want ErrTrailingContent", tail, err)
+		}
+	}
+	for _, tail := range []string{"", "\n", " \t\r\n "} {
+		if _, err := Convert([]byte(base+tail), DefaultLimits); err != nil {
+			t.Errorf("tail %q: %v", tail, err)
+		}
+	}
+}
+
+// integer는 표기가 아니라 값이다(JSON Schema). 부동소수점을 거치지 않고 판단한다.
+func TestIntegerNotation(t *testing.T) {
+	ok := map[string]int64{"17": 17, "17.0": 17, "1.7e1": 17, "170e-1": 17, "1.70E+1": 17, "0": 0, "-0": 0, "0.0e5": 0,
+		"0e-999999999999": 0, "9223372036854775807": 9223372036854775807, "92233720368547758.07e2": 9223372036854775807}
+	for s, want := range ok {
+		if got, why := nonNegInt(json.Number(s)); why != "" || got != want {
+			t.Errorf("%s: got %d %q, want %d", s, got, why, want)
+		}
+	}
+	bad := map[string]string{"1.5": "not an integer", "17e-1": "not an integer", "-1": "negative", "-1.0e0": "negative",
+		"9223372036854775808": "out of range", "1e19": "out of range", "1e400": "out of range", "1e9999999999999": "out of range",
+		"1e-9999999999999": "not an integer", "abc": "not a number"}
+	for s, want := range bad {
+		if _, why := nonNegInt(json.Number(s)); why != want {
+			t.Errorf("%s: reason %q, want %q", s, why, want)
+		}
+	}
+	if _, why := nonNegInt("12"); why != "expected an integer, got string" {
+		t.Errorf("string: %q", why)
+	}
+	// 변환 경로에서도 17.0이 줄 17이 된다.
+	in := mustConvert(t, `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"type":"cryptographic-asset","name":"RSA",
+	  "evidence":{"occurrences":[{"location":"a.c","line":17.0,"offset":1.7e1}]}}]}`)
+	l := in.Items[0].Locations[0]
+	if l.Reported.Line == nil || *l.Reported.Line != 17 || l.Reported.Offset == nil || *l.Reported.Offset != 17 {
+		t.Fatalf("line %v offset %v diags %+v", l.Reported.Line, l.Reported.Offset, l.Diagnostics)
+	}
+}
+
+// CBOMkit은 도구를 서비스로 적고 공급자를 provider.name에 둔다. 같은 구조를 직접 만들어 확인한다.
+func TestProducerProvider(t *testing.T) {
+	in := mustConvert(t, `{"bomFormat":"CycloneDX","specVersion":"1.6","metadata":{"tools":{"services":[
+	  {"provider":{"name":"PQCA"},"name":"CBOMkit"}],
+	  "components":[{"type":"application","supplier":{"name":"Acme"},"manufacturer":{"name":"Acme Labs"},"publisher":"Acme Pub","name":"x","version":"1"}]}}}`)
+	want := []Field{
+		{Name: "supplier.name", Value: "Acme", Pointer: "/metadata/tools/components/0/supplier/name"},
+		{Name: "manufacturer.name", Value: "Acme Labs", Pointer: "/metadata/tools/components/0/manufacturer/name"},
+		{Name: "provider.name", Value: "PQCA", Pointer: "/metadata/tools/services/0/provider/name"},
+		{Name: "name", Value: "CBOMkit", Pointer: "/metadata/tools/services/0/name"},
+	}
+	for _, w := range want {
+		found := false
+		for _, f := range in.Producer {
+			if f == w {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing %+v in %+v", w, in.Producer)
+		}
+	}
+	if got := field(in.Producer, "publisher"); len(got) != 1 || got[0].Value != "Acme Pub" {
+		t.Errorf("publisher %+v", got)
+	}
+	// 옛 배열 꼴도 읽는다.
+	old := mustConvert(t, `{"bomFormat":"CycloneDX","specVersion":"1.6","metadata":{"tools":[{"vendor":"V","name":"N","version":"1"}]}}`)
+	if len(old.Producer) != 3 || old.Producer[0].Pointer != "/metadata/tools/0/vendor" {
+		t.Errorf("legacy %+v", old.Producer)
+	}
+}
+
+// 필드가 없는 것과 자료형이 틀린 것은 다르다. 틀리면 wrong-type으로 알리고, 「항목 없음」처럼 두지 않는다.
+func TestWrongTypes(t *testing.T) {
+	diagAt := func(ds []Diagnostic, ptr string) bool {
+		for _, d := range ds {
+			if d.Code == DiagWrongType && d.Pointer == ptr {
+				return true
+			}
+		}
+		return false
+	}
+	top := mustConvert(t, `{"bomFormat":"CycloneDX","specVersion":"1.6","components":{},"metadata":{"tools":"x"}}`)
+	if !diagAt(top.Diagnostics, "/components") || !diagAt(top.Diagnostics, "/metadata/tools") || top.Counts.Diagnostics[DiagWrongType] != 2 {
+		t.Fatalf("top %+v", top.Diagnostics)
+	}
+	none := mustConvert(t, `{"bomFormat":"CycloneDX","specVersion":"1.6"}`)
+	if len(none.Diagnostics) != 0 {
+		t.Fatalf("absent fields must not be diagnosed: %+v", none.Diagnostics)
+	}
+	in := mustConvert(t, `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+	  {"type":"cryptographic-asset","name":{"x":1},"cryptoProperties":"x","properties":{},"evidence":[],"components":"x"},
+	  {"type":"cryptographic-asset","name":"B","cryptoProperties":{"algorithmProperties":[],"oid":null},
+	   "evidence":{"occurrences":{}}},
+	  {"type":"cryptographic-asset","name":"C","evidence":{"occurrences":[{"location":5},{"location":"a.c","symbol":3,"line":true}, 7]}},
+	  {"type":"library","components":{}}
+	]}`)
+	a, b, c := in.Items[0], in.Items[1], in.Items[2]
+	for _, p := range []string{"/components/0/name", "/components/0/cryptoProperties", "/components/0/properties", "/components/0/evidence", "/components/0/components"} {
+		if !diagAt(a.Diagnostics, p) {
+			t.Errorf("A missing wrong-type at %s: %+v", p, a.Diagnostics)
+		}
+	}
+	for _, p := range []string{"/components/1/cryptoProperties/algorithmProperties", "/components/1/cryptoProperties/oid", "/components/1/evidence/occurrences"} {
+		if !diagAt(b.Diagnostics, p) {
+			t.Errorf("B missing wrong-type at %s: %+v", p, b.Diagnostics)
+		}
+	}
+	if !diagAt(c.Diagnostics, "/components/2/evidence/occurrences/0/location") || !diagAt(c.Diagnostics, "/components/2/evidence/occurrences/2") {
+		t.Errorf("C item diags %+v", c.Diagnostics)
+	}
+	if len(c.Locations) != 1 || !diagAt(c.Locations[0].Diagnostics, "/components/2/evidence/occurrences/1/symbol") {
+		t.Errorf("C location %+v", c.Locations)
+	}
+	if c.Locations[0].Reported.Line != nil || c.Locations[0].Diagnostics[0].Code != DiagInvalidLine {
+		t.Errorf("C boolean line %+v", c.Locations[0].Diagnostics)
+	}
+	if !diagAt(in.Diagnostics, "/components/3/components") {
+		t.Errorf("library nested components %+v", in.Diagnostics)
+	}
+}

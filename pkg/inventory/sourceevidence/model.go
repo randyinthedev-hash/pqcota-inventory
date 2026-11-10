@@ -137,5 +137,5 @@ const (
 	DiagLineBaseUnknown   = "line-base-unknown" // 줄의 시작 기준을 몰라 정규화하지 않았다
 	DiagPrimitiveNotInVer = "primitive-not-in-spec"
 	DiagDeprecatedField   = "deprecated-field"
-	DiagNotAnObject       = "not-an-object"
+	DiagWrongType         = "wrong-type" // 해석 대상 필드가 있는데 자료형이 틀리다(없는 것과 구분한다)
 )
