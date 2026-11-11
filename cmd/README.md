@@ -209,6 +209,9 @@ rule that matched no component is refused too, unless you pass `--allow-unmatche
 preset stops the command before the CBOM is converted (exit code 2). Options it does not know also exit with 2, so a mistyped flag never
 falls back to writing a snapshot.
 
+**Size limits.** The CBOM may be at most 32 MiB and a mapping file at most 256 KiB. A larger file is not read to the end: a CBOM
+over the limit exits with 1, a mapping file over the limit with 2 (like any other unusable mapping). Nothing is stored either way.
+
 ```bash
 # look first, then store
 pqcota-cbom-ingest cbom.json --source-evidence --preset cdxgen-dotnet-sourcelocation --dry-run
@@ -269,8 +272,8 @@ that can only `SELECT` is enough. `env PQCOTA_DSN` is required, except for `--pr
 
 | Flag | What it does |
 |---|---|
-| (none) | lists stored conversions, newest first: CycloneDX version, the tool the CBOM names, the mapping used, item and location counts, how often it was received and the target nodes given (user-specified) |
-| `--id <id>` | one conversion: its receipts, then every item and its reported locations. The same location reported more than once is shown on one line, and every original pointer is listed under it |
+| (none) | lists stored conversions, newest first: CycloneDX version, the tool the CBOM names, the mapping used, item and location counts, how often it was received and the target nodes given (user-specified). Receipts are counted up to the latest 100 per conversion; beyond that it says "more than 100" and the target nodes are those of the latest 100 |
+| `--id <id>` | one conversion: its latest 100 receipts, then every item and its reported locations. If there are older receipts it says so (in `--json`, `receiptsTruncated: true`). The same location reported more than once is shown on one line, and every original pointer is listed under it |
 | `--input <sha256> --out <file>` | writes the CBOM exactly as received to a new file. It checks the hash first, does not overwrite an existing file, and never prints the bytes to the terminal |
 | `--map <sha256> --out <file>` | the same for a mapping file used in a conversion |
 | `--presets` | the built-in mappings and what they were checked against |
