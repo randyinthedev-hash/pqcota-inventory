@@ -101,6 +101,15 @@ func suite(t *testing.T, open func(t *testing.T, organization string) store.Stor
 		if err != nil || len(rc) != 2 || rc[0].Seq != r2.Seq || rc[1].Seq != r1.Seq {
 			t.Fatalf("Receipts: %+v %v", rc, err)
 		}
+		if ro, err := s.ReceiptsOf(interp.ID, 0); err != nil || len(ro) != 2 || ro[0].NodeID != "web-02" || ro[1].NodeID != "web-01" {
+			t.Fatalf("ReceiptsOf: %+v %v", ro, err)
+		}
+		if ro, err := s.ReceiptsOf(interp.ID, 1); err != nil || len(ro) != 1 || ro[0].Seq != r2.Seq {
+			t.Fatalf("ReceiptsOf limit 1: %+v %v", ro, err)
+		}
+		if ro, _ := s.ReceiptsOf("no-such-id", 0); len(ro) != 0 {
+			t.Fatalf("ReceiptsOf of an unknown id: %+v", ro)
+		}
 	})
 
 	t.Run("same id, different content is refused and leaves nothing", func(t *testing.T) {
@@ -166,6 +175,9 @@ func suite(t *testing.T, open func(t *testing.T, organization string) store.Stor
 		}
 		if rc, _ := b.Receipts(0); len(rc) != 0 {
 			t.Fatalf("Receipts leaks: %d", len(rc))
+		}
+		if rc, _ := b.ReceiptsOf(interp.ID, 0); len(rc) != 0 {
+			t.Fatalf("ReceiptsOf leaks: %d", len(rc))
 		}
 		// 같은 바이트를 다른 조직이 받으면 그 조직에서는 새 것이다.
 		r, err := b.Save(store.Input{Raw: raw}, convert(t, raw))

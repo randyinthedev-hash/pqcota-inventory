@@ -74,6 +74,8 @@ type Store interface {
 	InputRaw(sha256Hex string) ([]byte, error)
 	// Receipts — 최근 것부터. limit<=0이면 100건.
 	Receipts(limit int) ([]Receipt, error)
+	// ReceiptsOf — 한 변환 결과의 수신 기록, 최근 것부터. limit<=0이면 100건.
+	ReceiptsOf(interpretationID string, limit int) ([]Receipt, error)
 }
 
 const defaultLimit = 100

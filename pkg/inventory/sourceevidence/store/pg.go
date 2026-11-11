@@ -237,6 +237,20 @@ func (p *PgStore) Receipts(limit int) ([]Receipt, error) {
 	rows, err := p.pool.Query(context.Background(),
 		`SELECT seq,node_id,input_sha256,interpretation_id,new_input,new_interpretation,received_at
 		 FROM pqcota_source_receipts WHERE org=$1 ORDER BY seq DESC LIMIT $2`, p.org, limit)
+	return scanReceipts(rows, err)
+}
+
+func (p *PgStore) ReceiptsOf(id string, limit int) ([]Receipt, error) {
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	rows, err := p.pool.Query(context.Background(),
+		`SELECT seq,node_id,input_sha256,interpretation_id,new_input,new_interpretation,received_at
+		 FROM pqcota_source_receipts WHERE org=$1 AND interpretation_id=$2 ORDER BY seq DESC LIMIT $3`, p.org, id, limit)
+	return scanReceipts(rows, err)
+}
+
+func scanReceipts(rows pgx.Rows, err error) ([]Receipt, error) {
 	if err != nil {
 		return nil, err
 	}

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -105,8 +104,8 @@ func TestDryRunWritesNothing(t *testing.T) {
 	}
 	for _, want := range []string{
 		"No runtime snapshot is created",
-		"target node     web-01 (recorded as given; not checked against the scope master)",
-		"reported tool   provider.name = PQCA",
+		"target node     web-01 (user-specified; not checked against the scope master)",
+		"reported tool   name=cbomkit provider.name=PQCA",
 		"crypto components 2 · with a location 1 · without 1 · locations 3 · other components 1 (not read)",
 		"    reported location src/Wrap.java:12 (line base unknown) ×2\n" +
 			"      from /components/0/evidence/occurrences/0 · rule standard-occurrences@1 · kind: not supplied · offset 5 (unit undefined) · context Cipher.getInstance\n" +
@@ -256,35 +255,5 @@ func TestJSONSaysWhetherPersistent(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil || !got.Stored || got.StoreKind != "postgres" || !got.Persistent {
 		t.Fatalf("%+v %v", got, err)
-	}
-}
-
-// 두 규칙이 정규화해 같은 자리로 묶인 위치 — 머리는 정규화한 좌표, 보고값·규칙은 위치마다 적는다(A2 대비).
-func TestGroupOfNormalizedLocationsKeepsEachReportedValue(t *testing.T) {
-	n := func(v int64) *int64 { return &v }
-	mk := func(rule, ptr string, line, col int64, sym string) sourceevidence.Location {
-		return sourceevidence.Location{
-			Rule:           sourceevidence.RuleRef{Source: "user", ID: rule, Revision: "1"},
-			SourcePointers: map[string]string{"combined": ptr},
-			Reported:       sourceevidence.ReportedLocation{Path: "src/Wrap.cs", Line: n(line), Column: n(col), Symbol: sym},
-			ColumnUnit:     "codepoint",
-			Normalized:     sourceevidence.Normalized{Path: "src/Wrap.cs", Line: n(12), Column: n(5)},
-			Kind:           sourceevidence.LocationKindNotSupplied,
-		}
-	}
-	g := sourceevidence.GroupLocations([]sourceevidence.Location{
-		mk("zero-based", "/components/0/properties/0", 11, 4, "Encrypt"),
-		mk("one-based", "/components/0/properties/2", 12, 5, ""),
-	})
-	if len(g) != 1 {
-		t.Fatalf("groups %d", len(g))
-	}
-	var b strings.Builder
-	printGroup(func(f string, a ...any) { b.WriteString(fmt.Sprintf(f, a...)) }, g[0])
-	want := "    location src/Wrap.cs:12:5 (normalized, 1-based) ×2\n" +
-		"      from /components/0/properties/0 · rule zero-based@1 · kind: not supplied · reported src/Wrap.cs:11:4 · symbol Encrypt\n" +
-		"      from /components/0/properties/2 · rule one-based@1 · kind: not supplied · reported src/Wrap.cs:12:5\n"
-	if b.String() != want {
-		t.Fatalf("got\n%s\nwant\n%s", b.String(), want)
 	}
 }

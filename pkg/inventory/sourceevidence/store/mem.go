@@ -110,7 +110,17 @@ func (m *MemStore) InputRaw(sha string) ([]byte, error) {
 	return bytes.Clone(b), nil
 }
 
-func (m *MemStore) Receipts(limit int) ([]Receipt, error) {
+func (m *MemStore) Receipts(limit int) ([]Receipt, error) { return m.receiptsWhere("", limit) }
+
+func (m *MemStore) ReceiptsOf(id string, limit int) ([]Receipt, error) {
+	if id == "" {
+		return nil, nil
+	}
+	return m.receiptsWhere(id, limit)
+}
+
+// receiptsWhere — id가 비면 전부. Receipt에는 슬라이스·맵이 없어 값 복사로 충분하다.
+func (m *MemStore) receiptsWhere(id string, limit int) ([]Receipt, error) {
 	if limit <= 0 {
 		limit = defaultLimit
 	}
@@ -118,7 +128,9 @@ func (m *MemStore) Receipts(limit int) ([]Receipt, error) {
 	defer m.mu.Unlock()
 	var out []Receipt
 	for i := len(m.receipts) - 1; i >= 0 && len(out) < limit; i-- {
-		out = append(out, m.receipts[i])
+		if id == "" || m.receipts[i].InterpretationID == id {
+			out = append(out, m.receipts[i])
+		}
 	}
 	return out, nil
 }
