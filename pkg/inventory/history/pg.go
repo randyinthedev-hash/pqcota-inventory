@@ -119,6 +119,25 @@ func NewPgStoreIn(ctx context.Context, dsn, organization string) (*PgStore, erro
 	return &PgStore{pool: pool, org: o}, nil
 }
 
+// OpenPgStoreIn — 조회용으로 연다. DDL을 돌리지 않고 테이블이 있는지만 본다(PQCOTA_AUTO_DDL과 무관).
+// 승인처럼 읽기만 하는 자리가 빈 DB에 테이블을 만들면 안 되고, 읽기 권한만 있는 계정으로도 열려야 한다.
+// 테이블이 없으면 ErrSchemaMissing. 쓰기 메서드를 부르면 권한에 따라 실패한다 — 조회에만 쓴다.
+func OpenPgStoreIn(ctx context.Context, dsn, organization string) (*PgStore, error) {
+	o, err := org.Resolve(organization)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSchema(ctx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return &PgStore{pool: pool, org: o}, nil
+}
+
 // Org — 이 핸들이 묶인 조직.
 func (p *PgStore) Org() org.ID { return p.org }
 

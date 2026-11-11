@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -42,6 +43,28 @@ func ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if !exists {
 		return fmt.Errorf("%w: %s=0 turned automatic creation off — apply the schema first, or check search_path",
 			ErrSchemaMissing, AutoDDLEnv)
+	}
+	return nil
+}
+
+// readTables — 조회에 쓰는 테이블. 하나라도 없으면 스키마가 없는 것으로 본다.
+var readTables = []string{"pqcota_snapshots", "pqcota_observations", "pqcota_retention_events"}
+
+// checkSchema — DDL 없이 조회에 쓰는 테이블이 모두 있는지 본다(OpenPgStoreIn). 자동 DDL을 끈 쓰기 경로의
+// 확인(ensureSchema)은 지금처럼 스냅샷 테이블만 본다 — 그 동작은 바꾸지 않는다.
+func checkSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	var missing []string
+	for _, t := range readTables {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, t).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			missing = append(missing, t)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: %s", ErrSchemaMissing, strings.Join(missing, ", "))
 	}
 	return nil
 }
