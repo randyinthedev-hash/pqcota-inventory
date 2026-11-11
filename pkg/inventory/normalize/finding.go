@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	commonv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/common/v1"
@@ -68,12 +69,25 @@ func DeriveFindings(res *discoveryv1.CollectionResult, snapshotID, rulesetVersio
 			}}
 		case commonv1.CryptoRuntime_CRYPTO_RUNTIME_JCA:
 			providerSet := splitCSV(props["pqcota:jca.provider_set"])
-			f.RuntimeAxes = &discoveryv1.Finding_Jca{Jca: &discoveryv1.JcaAxes{
+			axes := &discoveryv1.JcaAxes{
 				ProviderSet:      providerSet,
 				RegistrationMode: parseRegistrationMode(props["pqcota:jca.registration_mode"]),
-			}}
-			// provider 시그니처 레지스트리 강화(수용 원칙 §2.3 · 프로비저닝 설계 §4.2): FIPS·SLH-DSA 갭.
-			f.FipsValidation, f.PqcReadiness = jcaEnrichment(providerSet, jcaServices(props["pqcota:jca.pqc_services"]))
+				AppKeyKind:       props["pqcota:jca.app_key_kind"],
+			}
+			f.RuntimeAxes = &discoveryv1.Finding_Jca{Jca: axes}
+			if raw := props["pqcota:jca.instances"]; raw != "" {
+				// 규칙 판 v4: 배포본의 JVM을 설정 변형으로 싣는다. 강화는 변형마다 하고, finding 한 장의 값은
+				// summarizeInstances가 정한다(같으면 그 값, 다르면 「varies」, 체인이 섞이거나 일부를 못 봤으면 빈 체인).
+				insts, err := parseJcaInstances(raw)
+				if err != nil {
+					return nil, fmt.Errorf("component %s: pqcota:jca.instances: %w", c.Name, err)
+				}
+				axes.Instances = insts
+				axes.ProviderSet, axes.RegistrationMode, f.FipsValidation, f.PqcReadiness = summarizeInstances(insts)
+			} else {
+				// provider 시그니처 레지스트리 강화(수용 원칙 §2.3 · 프로비저닝 설계 §4.2): FIPS·SLH-DSA 갭.
+				f.FipsValidation, f.PqcReadiness = jcaEnrichment(providerSet, jcaServices(props["pqcota:jca.pqc_services"]))
+			}
 		case commonv1.CryptoRuntime_CRYPTO_RUNTIME_WIN_CNG:
 			// CNG는 JCA와 같은 provider 축이다(수용 원칙 §2.1). provider 이름만으로는
 			// "이 노드가 ML-DSA를 할 수 있나"에 답할 수 없어(실측: provider 9개가 전부
@@ -100,6 +114,12 @@ func DeriveFindings(res *discoveryv1.CollectionResult, snapshotID, rulesetVersio
 // 경로가 없는 입력(외부 CBOM 등)은 전과 같은 id다 — 경로를 지어내지 않는다. 판은 넣지 않는다:
 // 같은 경로에서 판이 바뀐 것은 같은 자산의 변경이다.
 func findingID(node, name string, props map[string]string) string {
+	// JCA 식별 1단계: 배포본 키의 종류가 있는 새 JCA 입력은 구조화한 형식으로 만든다. 같은 키 값이라도 종류가
+	// 다르면(약한 키 jar-name의 foo.service와 systemd의 foo.service) 다른 배포본이다. 종류가 없는 옛 입력은
+	// 아래의 옛 바이트 그대로다(v0.11.0 골든, jca_golden_test.go).
+	if kind := props["pqcota:jca.app_key_kind"]; kind != "" && props["pqcota:crypto_runtime"] == "jca" {
+		return jcaFindingID(node, name, props["pqcota:crypto_runtime"], kind)
+	}
 	parts := []string{
 		node, name,
 		props["pqcota:crypto_runtime"],

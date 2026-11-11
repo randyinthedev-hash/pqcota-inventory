@@ -61,6 +61,9 @@ func detailOf(f *discoveryv1.Finding) string {
 			f.GetOpenssl().GetVersion(), short(f.GetOpenssl().GetBindingMode().String(), "OPENSSL_BINDING_MODE_"))
 	case f.GetJca() != nil:
 		detail = fmt.Sprintf("providers=%d %s", len(f.GetJca().GetProviderSet()), f.GetPqcReadiness())
+		if insts := f.GetJca().GetInstances(); len(insts) > 0 {
+			detail += "  " + instancesDetail(insts)
+		}
 	case f.GetCng() != nil:
 		// JCA와 같은 모양. 알고리즘 개수를 함께 내는 이유는 CNG의 provider 이름이 전부
 		// Microsoft라 개수만으로는 노드가 갈리지 않기 때문이다(실측: 9개가 전부 같은 벤더).
@@ -71,6 +74,27 @@ func detailOf(f *discoveryv1.Finding) string {
 		detail += "  @" + strings.Join(ak, ",") // 자산이 어느 앱 것인지(§1.5) — 공유 .so면 다중 앱
 	}
 	return detail
+}
+
+// instancesDetail — 설정 변형의 요약. 변형마다 앞 12자리 키·JVM 수·모드별 수를 적는다. JVM 수나 관측 방식만
+// 바뀌어도 이 줄이 달라져 diff가 changed로 보인다. 화면의 키는 표시용이고 묶는 키는 전체 SHA-256이다.
+func instancesDetail(insts []*discoveryv1.JcaInstance) string {
+	jvms, unobserved := uint32(0), 0
+	var parts []string
+	for _, in := range insts {
+		jvms += in.GetCount()
+		var modes []string
+		for _, mc := range in.GetModeCounts() {
+			modes = append(modes, fmt.Sprintf("%s:%d", nz(strings.ToLower(short(mc.GetMode().String(), "JCA_REGISTRATION_MODE_"))), mc.GetCount()))
+		}
+		state := ""
+		if !in.GetChainObserved() {
+			unobserved++
+			state = " chain not observed"
+		}
+		parts = append(parts, fmt.Sprintf("%s×%d[%s]%s", shortID(in.GetVariantKey()), in.GetCount(), strings.Join(modes, ","), state))
+	}
+	return fmt.Sprintf("instances=%d variants=%d unobserved=%d (%s)", jvms, len(insts), unobserved, strings.Join(parts, "; "))
 }
 
 func shortID(s string) string {

@@ -47,7 +47,14 @@ import (
 // `pqcota:jca.pqc_services`)을 provider마다 세고, 보지 않은 provider가 JDK 기본 제공이면 세지 않는다. v2는
 // 이름만 봐서 ML-KEM 서비스가 없던 Temurin 21.0.11 체인도 `provider-augmented (SLH-DSA gap)`으로 적었다.
 // finding id는 그대로이고 readiness 값만 바뀐다. 새 값 `none (…)`·`partial (…)`이 생겼다.
-const RulesetVersion = "pqcota-enrich/v3"
+//
+// v4 — JCA 식별 1단계. 새 jvm 수집기는 배포본마다 결과 하나를 내고(배포본 키와 그 종류
+// `pqcota:jca.app_key_kind`), 그 안의 JVM을 설정 변형(`pqcota:jca.instances`)으로 싣는다. 종류가 있는 입력의
+// finding id는 구조화한 새 형식이고, 변형끼리 체인이 다르거나 일부를 보지 못하면 finding의 provider_set이 비고
+// readiness·FIPS는 같지 않을 때 `varies (N variants)`다. 같은 관측에서 v3와 다른 id가 나오므로 판을 올렸다.
+// 종류가 없는 옛 입력은 v3와 같은 id·값이다. v3 스냅샷과 v4 스냅샷의 「사라짐」·「추가」에는 이 식별 규칙
+// 변경의 영향이 섞일 수 있다.
+const RulesetVersion = "pqcota-enrich/v4"
 
 func Normalize(results []*discoveryv1.CollectionResult, snapshotID, nodeID, rulesetVersion string,
 	store history.Store, policy *scope.AssetPolicy) (*history.Snapshot, error) {

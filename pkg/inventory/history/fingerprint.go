@@ -6,6 +6,7 @@ package history
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,6 +42,9 @@ func ContentHash(s *Snapshot) string {
 			// provider_set은 **순서에 의미가 있다**(우선순위 협상, 수용 원칙 §2.2) — 정렬하지 않는다.
 			fmt.Fprintf(h, "  J|%s|%s|%s|%d\n", j.GetJdkVendor(), j.GetJdkVersion(),
 				strings.Join(j.GetProviderSet(), ","), j.GetRegistrationMode())
+			if line := jcaVariantsLine(j); line != "" {
+				fmt.Fprintf(h, "  JI|%s\n", line)
+			}
 		}
 		if c := f.GetCng(); c != nil {
 			// provider_set은 **관측된 순서 그대로** 담긴 것이라 정렬하지 않는다(그 순서가 우선순위인지는
@@ -89,9 +93,13 @@ func sortedJoin(ss []string) string {
 // 순서로 해시했는지를 가리킨다. 다운스트림이 같은 스냅샷을 같은 규칙으로 만들어 같은 값을 내고,
 // 이력이 그 값으로 스냅샷을 찾는다.
 //
-// **v1은 닫혔다.** 필드를 더하거나 순서를 바꾸면 v2를 새로 만든다. v1을 고쳐 쓰면 이미 저장된
-// v1 참조가 같은 규칙으로 다시 계산되지 않는다. TestContentHashV1IsFrozen이 고정 입력의 값으로
-// 그것을 잰다.
+// **v1은 닫혔다.** 이미 있는 값의 바이트를 바꾸지 않는다. 필드를 고치거나 순서를 바꾸면 v2를 새로 만든다.
+// v1을 고쳐 쓰면 이미 저장된 v1 참조가 같은 규칙으로 다시 계산되지 않는다. TestContentHashV1IsFrozen이 고정
+// 입력의 값으로 그것을 잰다.
+//
+// 예외 하나(v0.12.0): JCA finding에 배포본 키의 종류·설정 변형(app_key_kind·instances)이 **있을 때만** JI 줄을
+// 더한다. 그 필드가 없는 스냅샷은 바이트까지 전과 같으므로 저장된 참조는 그대로 찾힌다. 그 필드가 든 스냅샷은
+// v0.12.0부터만 생기고, 옛 도구는 그런 finding을 애초에 읽지 못한다(protojson이 모르는 필드를 거부한다).
 const SnapshotContentFormatV1 = "pqcota-snapshot-content/v1"
 
 // ContentHashV1 — 참조용 지문. [ContentHash](중복 억제)와 **용도가 다르다.**
@@ -132,6 +140,11 @@ func ContentHashV1(s *Snapshot) string {
 		}
 		if j := f.GetJca(); j != nil {
 			w("J", j.GetJdkVendor(), j.GetJdkVersion(), strings.Join(j.GetProviderSet(), ","), j.GetRegistrationMode().String())
+			// JCA 식별 1단계(v0.12.0): 배포본 키의 종류와 설정 변형이 있을 때만 이 줄을 더한다. 없는 finding의 바이트는
+			// 그대로라 저장된 v1 참조가 같은 값으로 다시 계산된다.
+			if line := jcaVariantsLine(j); line != "" {
+				w("JI", line)
+			}
 		}
 		if c := f.GetCng(); c != nil {
 			var algs []string
@@ -174,4 +187,48 @@ func edgeIdentityV1(e *discoveryv1.ObservedEdge) string {
 		e.GetProtocol().String(), e.GetRole().String(), e.GetDetectionMethod().String(),
 		e.GetNegotiatedGroup(), e.GetCipher(), e.GetAppKey(), e.GetAppKeyKind(),
 	}, "|")
+}
+
+// jcaVariantsLine — JCA 배포본의 종류와 설정 변형을 지문 한 칸으로. 없으면 빈 문자열이다(줄을 더하지 않는다).
+// 필드 순서가 고정된 구조로 직렬화한다 — 경로·체인에 구분자가 섞여도 경계가 옮겨지지 않는다. 변형은
+// variant_key 순으로 다시 정렬해 넣는다(저장 순서에 흔들리지 않게). 변형의 JVM 수와 모드별 수도 넣는다:
+// 그것만 바뀌어도 관측이 달라진 것이라 지문이 달라져야 한다. finding id는 그대로다(id에는 변형이 없다).
+func jcaVariantsLine(j *discoveryv1.JcaAxes) string {
+	if j.GetAppKeyKind() == "" && len(j.GetInstances()) == 0 {
+		return ""
+	}
+	type modeCount struct {
+		Mode  string `json:"mode"`
+		Count uint32 `json:"count"`
+	}
+	type inst struct {
+		VariantKey            string      `json:"variant_key"`
+		JavaHome              string      `json:"java_home"`
+		SecurityPropertiesSet bool        `json:"security_properties_set"`
+		SecurityProperties    string      `json:"security_properties"`
+		ChainObserved         bool        `json:"chain_observed"`
+		ProviderSet           []string    `json:"provider_set"`
+		RegistrationMode      string      `json:"registration_mode"`
+		PqcReadiness          string      `json:"pqc_readiness"`
+		FipsValidation        string      `json:"fips_validation"`
+		Count                 uint32      `json:"count"`
+		ModeCounts            []modeCount `json:"mode_counts"`
+	}
+	var is []inst
+	for _, in := range j.GetInstances() {
+		var mcs []modeCount
+		for _, mc := range in.GetModeCounts() {
+			mcs = append(mcs, modeCount{mc.GetMode().String(), mc.GetCount()})
+		}
+		sort.Slice(mcs, func(a, b int) bool { return mcs[a].Mode < mcs[b].Mode })
+		is = append(is, inst{in.GetVariantKey(), in.GetJavaHome(), in.GetSecurityPropertiesSet(), in.GetSecurityProperties(),
+			in.GetChainObserved(), in.GetProviderSet(), in.GetRegistrationMode().String(), in.GetPqcReadiness(),
+			in.GetFipsValidation(), in.GetCount(), mcs})
+	}
+	sort.Slice(is, func(a, b int) bool { return is[a].VariantKey < is[b].VariantKey })
+	b, _ := json.Marshal(struct {
+		AppKeyKind string `json:"app_key_kind"`
+		Instances  []inst `json:"instances"`
+	}{j.GetAppKeyKind(), is})
+	return string(b)
 }
