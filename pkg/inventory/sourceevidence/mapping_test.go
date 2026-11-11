@@ -380,3 +380,67 @@ func TestInvalidCombinedValues(t *testing.T) {
 		t.Fatalf("refusals %v", Refusals(in, true))
 	}
 }
+
+// 로드한 뒤 호출자가 원문 슬라이스를 고쳐도, 적용한 규칙과 결과에 적는 원문 해시는 로드한 원문 그대로다.
+func TestLoadedMapIsACopy(t *testing.T) {
+	buf := []byte(dupMap("fx", dupRule("loc", "1", true)))
+	orig := sha256Hex(buf)
+	lm, err := LoadMap(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy(buf, []byte(strings.Replace(string(buf), "example:sourceLocation", "example:sourceLocatioX", 1)))
+	got := lm.Raw()
+	got[0] = 'X' // 받아 간 사본을 고쳐도 같다
+	in, err := ConvertWith([]byte(dupFixture), DefaultLimits, []*LoadedMap{lm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.Maps[0].SHA256 != orig || lm.SHA256() != orig || sha256Hex(lm.Raw()) != orig {
+		t.Fatalf("map hash changed: %s, want %s", in.Maps[0].SHA256, orig)
+	}
+	if in.Counts.Locations != 4 {
+		t.Fatalf("rules from the edited bytes were applied: %d locations", in.Counts.Locations)
+	}
+}
+
+// 상한은 위치·진단을 더하는 그 자리에서 건다.
+func TestLimitsWhileApplying(t *testing.T) {
+	props := func(n int, value string) string {
+		var ps []string
+		for i := 0; i < n; i++ {
+			ps = append(ps, `{"name":"example:sourceLocation","value":"`+value+`"}`)
+		}
+		return `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"type":"cryptographic-asset","name":"x","properties":[` + strings.Join(ps, ",") + `]}]}`
+	}
+	lm, _ := LoadMap([]byte(dupMap("fx", dupRule("loc", "1", true))))
+	lim := DefaultLimits
+	lim.MaxLocationsPerItem, lim.MaxDiagnosticsPerItem = 5, 5
+
+	if in, err := ConvertWith([]byte(props(5, "a.cs:1:1")), lim, []*LoadedMap{lm}); err != nil || in.Counts.Locations != 5 {
+		t.Fatalf("exactly at the location limit: %v", err)
+	}
+	if _, err := ConvertWith([]byte(props(6, "a.cs:1:1")), lim, []*LoadedMap{lm}); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("one location over: %v", err)
+	}
+	// 잘못된 값만 반복 — 위치는 하나도 없지만 진단 상한에 걸린다.
+	if in, err := ConvertWith([]byte(props(5, "bad")), lim, []*LoadedMap{lm}); err != nil || len(in.Items[0].Diagnostics) != 5 {
+		t.Fatalf("exactly at the diagnostic limit: %v", err)
+	}
+	if _, err := ConvertWith([]byte(props(100, "bad")), lim, []*LoadedMap{lm}); !errors.Is(err, ErrLimitExceeded) || !strings.Contains(err.Error(), "diagnostics") {
+		t.Fatalf("repeated bad values: %v", err)
+	}
+	// 배열 요소도 같다.
+	arr := dupMap("arr", `{"id":"a","componentTypes":["cryptographic-asset"],"locations":{"from":"component","array":"/x","file":{"pointer":"/f"},"lineBase":1}}`)
+	alm, _ := LoadMap([]byte(arr))
+	els := strings.TrimSuffix(strings.Repeat(`{"f":"a.cs"},`, 6), ",")
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"type":"cryptographic-asset","name":"x","x":[` + els + `]}]}`
+	if _, err := ConvertWith([]byte(raw), lim, []*LoadedMap{alm}); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("array over the limit: %v", err)
+	}
+	bad := strings.TrimSuffix(strings.Repeat(`7,`, 6), ",")
+	raw = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"type":"cryptographic-asset","name":"x","x":[` + bad + `]}]}`
+	if _, err := ConvertWith([]byte(raw), lim, []*LoadedMap{alm}); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("array of wrong types over the diagnostic limit: %v", err)
+	}
+}

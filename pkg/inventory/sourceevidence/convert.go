@@ -20,11 +20,13 @@ import (
 type Limits struct {
 	MaxComponents       int
 	MaxLocationsPerItem int
-	MaxDepth            int // 중첩 components 깊이
+	// MaxDiagnosticsPerItem — 매핑 규칙이 한 항목에 남기는 진단. 잘못된 값만 반복되면 위치 상한에 걸리지 않으므로 따로 둔다.
+	MaxDiagnosticsPerItem int
+	MaxDepth              int // 중첩 components 깊이
 }
 
 // DefaultLimits — 검토 시작값.
-var DefaultLimits = Limits{MaxComponents: 100000, MaxLocationsPerItem: 1024, MaxDepth: 32}
+var DefaultLimits = Limits{MaxComponents: 100000, MaxLocationsPerItem: 1024, MaxDiagnosticsPerItem: 1024, MaxDepth: 32}
 
 // 변환을 거부하는 이유. 진단(Diagnostic)과 달리 결과가 없다.
 var (
@@ -59,12 +61,19 @@ func Convert(raw []byte, lim Limits) (*Interpretation, error) { return ConvertWi
 // 해석 대상 필드는 「없음」과 「자료형이 틀림」을 구분한다. 없으면 조용히 넘어가고(정상 입력), 있는데
 // 자료형이 틀리면 wrong-type으로 알린다 — 틀린 구조를 「항목 없음」처럼 보이게 두지 않는다.
 func ConvertWith(raw []byte, lim Limits, maps []*LoadedMap) (*Interpretation, error) {
+	// 규칙은 LoadedMap이 쥔 원문에서 지금 다시 읽는다 — 결과에 적는 해시와 같은 바이트다.
+	parsed := make([]*Map, len(maps))
 	seen := map[string]bool{}
-	for _, lm := range maps {
-		if seen[lm.Map.ID] {
-			return nil, fmt.Errorf("%w: two maps with id %q", ErrBadMap, lm.Map.ID)
+	for i, lm := range maps {
+		m, err := ParseMap(lm.raw)
+		if err != nil {
+			return nil, err
 		}
-		seen[lm.Map.ID] = true
+		if seen[m.ID] {
+			return nil, fmt.Errorf("%w: two maps with id %q", ErrBadMap, m.ID)
+		}
+		seen[m.ID] = true
+		parsed[i] = m
 	}
 	doc, err := decode(raw)
 	if err != nil {
@@ -98,10 +107,11 @@ func ConvertWith(raw []byte, lim Limits, maps []*LoadedMap) (*Interpretation, er
 		Counts:           Counts{Diagnostics: map[string]int{}},
 	}
 	var applied []appliedRule
-	for _, lm := range maps {
-		in.Maps = append(in.Maps, MapRef{Source: lm.Source, ID: lm.Map.ID, Revision: lm.Map.Revision, SHA256: sha256Hex(lm.Raw)})
-		for _, r := range lm.Map.Rules {
-			ref := ruleRef(lm.Source, lm.Map, r)
+	for i, lm := range maps {
+		m := parsed[i]
+		in.Maps = append(in.Maps, MapRef{Source: lm.source, ID: m.ID, Revision: m.Revision, SHA256: sha256Hex(lm.raw)})
+		for _, r := range m.Rules {
+			ref := ruleRef(lm.source, m, r)
 			in.Rules = append(in.Rules, ref)
 			in.RuleMatches = append(in.RuleMatches, RuleMatch{Rule: ref})
 			applied = append(applied, appliedRule{ref: ref, spec: r.Loc})
@@ -248,13 +258,14 @@ func (c *converter) item(comp map[string]any, ptr string) (Item, error) {
 	}
 	for i, r := range c.rules {
 		before := len(it.Locations)
-		if c.applyRule(r, comp, ptr, &it) {
+		matched, err := c.applyRule(r, comp, ptr, &it)
+		if err != nil {
+			return it, err
+		}
+		if matched {
 			c.in.RuleMatches[i].Components++
 		}
 		c.in.RuleMatches[i].Locations += len(it.Locations) - before
-		if len(it.Locations) > c.lim.MaxLocationsPerItem {
-			return it, fmt.Errorf("%w: more than %d locations at %s", ErrLimitExceeded, c.lim.MaxLocationsPerItem, ptr)
-		}
 	}
 	return it, nil
 }

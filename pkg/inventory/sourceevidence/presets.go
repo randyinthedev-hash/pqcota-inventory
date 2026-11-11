@@ -44,7 +44,7 @@ func Presets() []Preset {
 			panic(err) // 내장 파일은 시험이 검증한다
 		}
 		p := presetInfo[id]
-		p.ID, p.Revision = id, lm.Map.Revision
+		p.ID, p.Revision = id, lm.Revision()
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -60,12 +60,12 @@ func LoadPreset(id string) (*LoadedMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, err := ParseMap(raw)
+	lm, err := newLoadedMap("preset", raw)
 	if err != nil {
 		return nil, fmt.Errorf("preset %s: %w", id, err)
 	}
-	if m.ID != id {
-		return nil, fmt.Errorf("preset file %s declares id %q", id, m.ID)
+	if lm.ID() != id {
+		return nil, fmt.Errorf("preset file %s declares id %q", id, lm.ID())
 	}
-	return &LoadedMap{Source: "preset", Raw: raw, Map: m}, nil
+	return lm, nil
 }

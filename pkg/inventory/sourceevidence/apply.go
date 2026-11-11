@@ -10,21 +10,40 @@ import (
 	"strings"
 )
 
-// LoadedMap — 변환에 쓸 설정 하나. 원문을 함께 둔다(저장소가 원문을 보관하고, 결과는 원문 해시를 가리킨다).
+// LoadedMap — 변환에 쓸 설정 하나. 검증한 원문의 사본만 쥐고, 바깥에서 바꿀 수 없다.
+//
+// 파싱한 규칙을 따로 들고 있지 않는다. 변환할 때마다 이 원문에서 규칙을 다시 읽으므로, 결과에 적는 원문 해시와
+// 실제로 적용한 규칙이 언제나 같은 바이트에서 나온다. 호출자가 넘긴 슬라이스를 나중에 고쳐도 영향이 없다.
 type LoadedMap struct {
-	Source string // "preset" 또는 "user"
-	Raw    []byte
-	Map    *Map
+	source  string // "preset" 또는 "user"
+	raw     []byte
+	id, rev string
 }
 
-// LoadMap — 사용자 설정 원문을 읽는다.
-func LoadMap(raw []byte) (*LoadedMap, error) {
+func newLoadedMap(source string, raw []byte) (*LoadedMap, error) {
+	raw = append([]byte(nil), raw...)
 	m, err := ParseMap(raw)
 	if err != nil {
 		return nil, err
 	}
-	return &LoadedMap{Source: "user", Raw: raw, Map: m}, nil
+	return &LoadedMap{source: source, raw: raw, id: m.ID, rev: m.Revision}, nil
 }
+
+// LoadMap — 사용자 설정 원문을 검증해 읽는다. 원문은 복사한다.
+func LoadMap(raw []byte) (*LoadedMap, error) { return newLoadedMap("user", raw) }
+
+// Source — "preset" 또는 "user".
+func (lm *LoadedMap) Source() string { return lm.source }
+
+// ID·Revision — 설정의 id와 revision.
+func (lm *LoadedMap) ID() string       { return lm.id }
+func (lm *LoadedMap) Revision() string { return lm.rev }
+
+// Raw — 원문의 사본.
+func (lm *LoadedMap) Raw() []byte { return append([]byte(nil), lm.raw...) }
+
+// SHA256 — 원문의 해시.
+func (lm *LoadedMap) SHA256() string { return sha256Hex(lm.raw) }
 
 // MapRef — 변환에 쓴 설정. 결과 ID에 들어간다 — 같은 규칙이라도 원문이 다르면 다른 결과다(설계 §6이 허용한다).
 type MapRef struct {
@@ -86,81 +105,100 @@ type appliedRule struct {
 	spec LocationSpec
 }
 
-// property — 컴포넌트 properties의 한 항목.
-type property struct {
-	ptr   string
-	value any
+// addLocation·addDiagnostic — 한 항목에 쌓는 위치·진단은 더하는 그 자리에서 잰다. 다 만든 뒤에 세면 큰 반복
+// property·배열이 상한을 넘는 위치를 메모리에 모두 만든 뒤에야 거부되고, 잘못된 값만 반복되면 진단이 끝없이 쌓인다.
+func (c *converter) addLocation(it *Item, l Location) error {
+	if len(it.Locations) >= c.lim.MaxLocationsPerItem {
+		return fmt.Errorf("%w: more than %d locations at %s", ErrLimitExceeded, c.lim.MaxLocationsPerItem, it.ComponentPointer)
+	}
+	it.Locations = append(it.Locations, l)
+	return nil
 }
 
-// properties — name이 같은 항목들. 자료형이 틀린 항목은 표준 경로(item)가 이미 진단했으므로 건너뛴다.
-func properties(obj map[string]any, base, name string) []property {
+func (c *converter) addDiagnostic(it *Item, d Diagnostic) error {
+	if len(it.Diagnostics) >= c.lim.MaxDiagnosticsPerItem {
+		return fmt.Errorf("%w: more than %d diagnostics at %s", ErrLimitExceeded, c.lim.MaxDiagnosticsPerItem, it.ComponentPointer)
+	}
+	it.Diagnostics = append(it.Diagnostics, d)
+	return nil
+}
+
+// eachProperty — name이 같은 항목마다 f. 자료형이 틀린 항목은 표준 경로(item)가 이미 진단했으므로 건너뛴다.
+// 목록을 따로 만들지 않는다(반복이 커도 메모리를 쓰지 않는다). f가 오류를 내면 멈춘다.
+func eachProperty(obj map[string]any, base, name string, f func(ptr string, value any) error) error {
 	arr, _ := obj["properties"].([]any)
-	var out []property
 	for i, e := range arr {
 		m, ok := e.(map[string]any)
 		if !ok {
 			continue
 		}
 		if n, _ := m["name"].(string); n == name {
-			out = append(out, property{ptr: base + "/properties/" + strconv.Itoa(i), value: m["value"]})
+			if err := f(base+"/properties/"+strconv.Itoa(i), m["value"]); err != nil {
+				return err
+			}
 		}
 	}
-	return out
+	return nil
 }
 
-// applyRule — 컴포넌트 하나에 규칙 하나. 맞았는지(주 필드가 있었는지)를 돌려준다.
-func (c *converter) applyRule(r appliedRule, comp map[string]any, ptr string, it *Item) bool {
-	d := func(code, p, format string, a ...any) {
-		it.Diagnostics = append(it.Diagnostics, Diagnostic{Code: code, Pointer: p, Detail: r.ref.ID + ": " + fmt.Sprintf(format, a...)})
+func countProperties(obj map[string]any, name string) int {
+	n := 0
+	eachProperty(obj, "", name, func(string, any) error { n++; return nil })
+	return n
+}
+
+// applyRule — 컴포넌트 하나에 규칙 하나. 맞았는지(주 필드가 있었는지)를 돌려준다. 오류는 상한 초과뿐이다.
+func (c *converter) applyRule(r appliedRule, comp map[string]any, ptr string, it *Item) (bool, error) {
+	d := func(code, p, format string, a ...any) error {
+		return c.addDiagnostic(it, Diagnostic{Code: code, Pointer: p, Detail: r.ref.ID + ": " + fmt.Sprintf(format, a...)})
 	}
 	s := r.spec
 	if s.Combined != nil {
-		ps := properties(comp, ptr, s.Combined.Property)
-		if len(ps) == 0 {
-			return false
+		n := countProperties(comp, s.Combined.Property)
+		if n == 0 {
+			return false, nil
 		}
-		if len(ps) > 1 && !s.Combined.Each {
-			d(DiagMapAmbiguous, ptr+"/properties", "%d values of %q; set each: true if every value is one location", len(ps), s.Combined.Property)
-			return true
+		if n > 1 && !s.Combined.Each {
+			return true, d(DiagMapAmbiguous, ptr+"/properties", "%d values of %q; set each: true if every value is one location", n, s.Combined.Property)
 		}
-		for _, p := range ps {
-			str, ok := p.value.(string)
+		return true, eachProperty(comp, ptr, s.Combined.Property, func(pp string, value any) error {
+			str, ok := value.(string)
 			if !ok {
-				d(DiagMapWrongType, p.ptr+"/value", "expected a string, got %s", jsonType(p.value))
-				continue
+				return d(DiagMapWrongType, pp+"/value", "expected a string, got %s", jsonType(value))
 			}
 			path, line, col, why := parseCombined(str, s.Combined.Parser)
 			if why != "" {
-				d(DiagMapUnparsable, p.ptr+"/value", "%q does not fit %s: %s", str, s.Combined.Parser, why)
-				continue
+				return d(DiagMapUnparsable, pp+"/value", "%q does not fit %s: %s", str, s.Combined.Parser, why)
 			}
-			l := c.mapLocation(r, it, map[string]string{"combined": p.ptr}, path, &line, col)
+			l := c.mapLocation(r, it, map[string]string{"combined": pp}, path, &line, col)
 			l.Reported.Raw = str
-			it.Locations = append(it.Locations, l)
-		}
-		return true
+			return c.addLocation(it, l)
+		})
 	}
 
 	if s.Array != "" {
 		x, ok := resolvePointer(comp, s.Array)
 		if !ok {
-			return false
+			return false, nil
 		}
 		arr, ok := x.([]any)
 		if !ok {
-			d(DiagMapWrongType, ptr+s.Array, "expected an array, got %s", jsonType(x))
-			return true
+			return true, d(DiagMapWrongType, ptr+s.Array, "expected an array, got %s", jsonType(x))
 		}
 		for i, e := range arr {
 			ep := ptr + s.Array + "/" + strconv.Itoa(i)
 			el, ok := e.(map[string]any)
 			if !ok {
-				d(DiagMapWrongType, ep, "expected an object, got %s", jsonType(e))
+				if err := d(DiagMapWrongType, ep, "expected an object, got %s", jsonType(e)); err != nil {
+					return true, err
+				}
 				continue
 			}
-			c.splitLocation(r, el, ep, it, true, d)
+			if _, err := c.splitLocation(r, el, ep, it, true, d); err != nil {
+				return true, err
+			}
 		}
-		return true
+		return true, nil
 	}
 	return c.splitLocation(r, comp, ptr, it, false, d)
 }
@@ -171,39 +209,43 @@ func pick(sel *Selector, obj map[string]any, base string) (v any, p string, foun
 		x, ok := resolvePointer(obj, sel.Pointer)
 		return x, base + sel.Pointer, ok, false
 	}
-	ps := properties(obj, base, sel.Property)
-	switch len(ps) {
+	n := 0
+	eachProperty(obj, base, sel.Property, func(pp string, value any) error {
+		n++
+		if n == 1 {
+			v, p = value, pp+"/value"
+		}
+		return nil
+	})
+	switch n {
 	case 0:
 		return nil, "", false, false
 	case 1:
-		return ps[0].value, ps[0].ptr + "/value", true, false
+		return v, p, true, false
 	}
 	return nil, base + "/properties", true, true
 }
 
 // splitLocation — 파일·줄·열을 따로 읽는다. inArray면 배열 요소 하나(맞은 것으로 이미 셌다).
 func (c *converter) splitLocation(r appliedRule, obj map[string]any, base string, it *Item, inArray bool,
-	d func(code, p, format string, a ...any)) bool {
+	d func(code, p, format string, a ...any) error) (bool, error) {
 	s := r.spec
 	fv, fp, found, amb := pick(s.File, obj, base)
 	if !found {
 		if inArray {
-			d(DiagMapFieldMissing, base, "file is missing in this element")
+			return true, d(DiagMapFieldMissing, base, "file is missing in this element")
 		}
-		return inArray
+		return false, nil
 	}
 	if amb {
-		d(DiagMapAmbiguous, fp, "more than one %q for the file", s.File.Property)
-		return true
+		return true, d(DiagMapAmbiguous, fp, "more than one %q for the file", s.File.Property)
 	}
 	path, ok := fv.(string)
 	if !ok || path == "" {
 		if ok {
-			d(DiagMapFieldMissing, fp, "file is an empty string")
-		} else {
-			d(DiagMapWrongType, fp, "file: expected a string, got %s", jsonType(fv))
+			return true, d(DiagMapFieldMissing, fp, "file is an empty string")
 		}
-		return true
+		return true, d(DiagMapWrongType, fp, "file: expected a string, got %s", jsonType(fv))
 	}
 	ptrs := map[string]string{"file": fp}
 
@@ -212,16 +254,13 @@ func (c *converter) splitLocation(r appliedRule, obj map[string]any, base string
 		v, p, found, amb := pick(s.Line, obj, base)
 		switch {
 		case !found:
-			d(DiagMapFieldMissing, base, "line is missing")
-			return true
+			return true, d(DiagMapFieldMissing, base, "line is missing")
 		case amb:
-			d(DiagMapAmbiguous, p, "more than one %q for the line", s.Line.Property)
-			return true
+			return true, d(DiagMapAmbiguous, p, "more than one %q for the line", s.Line.Property)
 		}
 		n, why := intValue(v)
 		if why != "" {
-			d(DiagMapInvalidLine, p, "%s", why)
-			return true
+			return true, d(DiagMapInvalidLine, p, "%s", why)
 		}
 		line, ptrs["line"] = &n, p
 	}
@@ -230,21 +269,17 @@ func (c *converter) splitLocation(r appliedRule, obj map[string]any, base string
 		v, p, found, amb := pick(s.Column, obj, base)
 		switch {
 		case !found:
-			d(DiagMapFieldMissing, base, "column is missing")
-			return true
+			return true, d(DiagMapFieldMissing, base, "column is missing")
 		case amb:
-			d(DiagMapAmbiguous, p, "more than one %q for the column", s.Column.Property)
-			return true
+			return true, d(DiagMapAmbiguous, p, "more than one %q for the column", s.Column.Property)
 		}
 		n, why := intValue(v)
 		if why != "" {
-			d(DiagMapInvalidColumn, p, "%s", why)
-			return true
+			return true, d(DiagMapInvalidColumn, p, "%s", why)
 		}
 		col, ptrs["column"] = &n, p
 	}
-	it.Locations = append(it.Locations, c.mapLocation(r, it, ptrs, path, line, col))
-	return true
+	return true, c.addLocation(it, c.mapLocation(r, it, ptrs, path, line, col))
 }
 
 // intValue — 줄·열 값. properties의 값은 문자열이므로 십진 숫자 문자열도 받는다. JSON 숫자는 표준 경로와 같은 규칙.

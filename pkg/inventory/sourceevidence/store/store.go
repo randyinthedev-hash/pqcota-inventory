@@ -47,7 +47,7 @@ type MapInput struct {
 func MapsOf(lms []*sourceevidence.LoadedMap) []MapInput {
 	out := make([]MapInput, len(lms))
 	for i, lm := range lms {
-		out[i] = MapInput{Source: lm.Source, Raw: lm.Raw}
+		out[i] = MapInput{Source: lm.Source(), Raw: lm.Raw()}
 	}
 	return out
 }
