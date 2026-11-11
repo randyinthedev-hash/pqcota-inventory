@@ -217,6 +217,50 @@ func suite(t *testing.T, open func(t *testing.T, organization string) store.Stor
 		}
 	})
 
+	t.Run("changing what was passed in or handed out does not change what is stored", func(t *testing.T) {
+		s := open(t, "org-alias-"+stamp)
+		raw := cbom("alias-" + stamp)
+		interp := convert(t, raw)
+		want := marshal(t, interp)
+		if _, err := s.Save(store.Input{Raw: raw}, interp); err != nil {
+			t.Fatal(err)
+		}
+		// 저장에 넘긴 값을 고친다.
+		raw[0] = ' '
+		interp.Rules[0].ID = "changed"
+		interp.Producer[0].Value = "changed"
+		interp.Counts.Diagnostics["changed"] = 1
+		interp.Items[0].Reported[0].Value = "changed"
+
+		// 받아 간 값을 고친다.
+		l, _ := s.Interpretations(0)
+		l[0].Rules[0].ID = "changed"
+		l[0].Producer[0].Value = "changed"
+		if l[0].Counts.Diagnostics == nil {
+			l[0].Counts.Diagnostics = map[string]int{}
+		}
+		l[0].Counts.Diagnostics["changed"] = 1
+		got, _ := s.Interpretation(interp.ID)
+		got.Rules[0].ID = "changed"
+		got.Items[0].Reported[0].Value = "changed"
+		b, _ := s.InputRaw(convert(t, cbom("alias-"+stamp)).InputSHA256)
+		b[0] = 'x'
+
+		// 다시 읽으면 처음 저장한 그대로이고, 목록과 상세가 같은 값을 말한다.
+		got, _ = s.Interpretation(interp.ID)
+		if !bytes.Equal(marshal(t, got), want) {
+			t.Fatalf("detail changed after the caller edited values")
+		}
+		l, _ = s.Interpretations(0)
+		if l[0].Rules[0].ID != got.Rules[0].ID || l[0].Producer[0].Value != got.Producer[0].Value ||
+			!bytes.Equal(marshal(t, l[0].Counts), marshal(t, got.Counts)) {
+			t.Fatalf("list and detail disagree: %+v vs rules %+v counts %+v", l[0], got.Rules, got.Counts)
+		}
+		if rb, _ := s.InputRaw(got.InputSHA256); !bytes.Equal(rb, cbom("alias-"+stamp)) {
+			t.Fatalf("stored input changed")
+		}
+	})
+
 	t.Run("newest first and limit", func(t *testing.T) {
 		s := open(t, "org-ord-"+stamp)
 		var ids []string

@@ -107,12 +107,18 @@ func prepare(in Input, interp *sourceevidence.Interpretation) (prepared, error) 
 		inputSHA: inSHA,
 		body:     body,
 		bodySHA:  hex.EncodeToString(bs[:]),
-		summary: Summary{
-			ID: interp.ID, InputSHA256: inSHA, SpecVersion: interp.SpecVersion,
-			SchemaVersion: interp.SchemaVersion, ConverterVersion: interp.ConverterVersion,
-			Rules: interp.Rules, Counts: interp.Counts, Producer: interp.Producer,
-		},
+		summary:  summaryOf(interp),
 	}, nil
+}
+
+// summaryOf — 목록 요약. 슬라이스·맵을 interp와 함께 쓴다 — 오래 붙잡아 둘 값이면 저장한 JSON에서 다시
+// 만든 interp로 부른다(MemStore가 그렇게 한다).
+func summaryOf(interp *sourceevidence.Interpretation) Summary {
+	return Summary{
+		ID: interp.ID, InputSHA256: interp.InputSHA256, SpecVersion: interp.SpecVersion,
+		SchemaVersion: interp.SchemaVersion, ConverterVersion: interp.ConverterVersion,
+		Rules: interp.Rules, Counts: interp.Counts, Producer: interp.Producer,
+	}
 }
 
 func decodeInterpretation(body []byte) (*sourceevidence.Interpretation, error) {

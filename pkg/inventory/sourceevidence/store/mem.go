@@ -23,10 +23,12 @@ type MemStore struct {
 	receipts []Receipt
 }
 
+// memInterp — 저장한 JSON 바이트만 쥔다. 목록과 상세가 모두 여기서 다시 만들어지므로 둘이 어긋나지 않고,
+// 호출자가 넘긴 값이나 받아 간 값을 고쳐도 저장된 것은 바뀌지 않는다.
 type memInterp struct {
-	body    []byte
-	bodySHA string
-	summary Summary
+	body      []byte
+	bodySHA   string
+	createdAt time.Time
 }
 
 // NewMemStoreIn — organization이 비면 org.Resolve의 규칙을 따른다.
@@ -59,10 +61,8 @@ func (m *MemStore) Save(in Input, interp *sourceevidence.Interpretation) (Receip
 		r.NewInput = true
 	}
 	if _, ok := m.interps[p.summary.ID]; !ok {
-		s := p.summary
-		s.CreatedAt = now
-		m.interps[s.ID] = memInterp{body: p.body, bodySHA: p.bodySHA, summary: s}
-		m.order = append(m.order, s.ID)
+		m.interps[p.summary.ID] = memInterp{body: p.body, bodySHA: p.bodySHA, createdAt: now}
+		m.order = append(m.order, p.summary.ID)
 		r.NewInterpretation = true
 	}
 	r.Seq = int64(len(m.receipts)) + 1
@@ -78,7 +78,14 @@ func (m *MemStore) Interpretations(limit int) ([]Summary, error) {
 	defer m.mu.Unlock()
 	var out []Summary
 	for i := len(m.order) - 1; i >= 0 && len(out) < limit; i-- {
-		out = append(out, m.interps[m.order[i]].summary)
+		it := m.interps[m.order[i]]
+		interp, err := decodeInterpretation(it.body)
+		if err != nil {
+			return nil, err
+		}
+		s := summaryOf(interp)
+		s.CreatedAt = it.createdAt
+		out = append(out, s)
 	}
 	return out, nil
 }
