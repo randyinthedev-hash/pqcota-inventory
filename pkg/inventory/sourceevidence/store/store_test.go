@@ -276,6 +276,61 @@ func suite(t *testing.T, open func(t *testing.T, organization string) store.Stor
 		}
 	})
 
+	t.Run("maps are stored with the interpretation and must match it", func(t *testing.T) {
+		s := open(t, "org-map-"+stamp)
+		raw := []byte(strings.Replace(string(cbom("map-"+stamp)), `"evidence":{"occurrences":[{"location":"src/Wrap.cs","line":12,"offset":5},{"location":"src/Wrap.cs","line":30}]}`,
+			`"properties":[{"name":"x:loc","value":"src/Wrap.cs:7:3"}]`, 1))
+		mapRaw := []byte(`{"format":"pqcota-source-map/v1","id":"m","revision":"1","rules":[{"id":"r","componentTypes":["cryptographic-asset"],
+		  "locations":{"from":"component","combined":{"property":"x:loc","parser":"path:line:column"},"lineBase":1,"columnBase":1,"columnUnit":"codepoint"}}]}`)
+		lm, err := sourceevidence.LoadMap(mapRaw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conv := func() *sourceevidence.Interpretation {
+			in, err := sourceevidence.ConvertWith(raw, sourceevidence.DefaultLimits, []*sourceevidence.LoadedMap{lm})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return in
+		}
+		other := []byte(strings.Replace(string(mapRaw), `"id":"m"`, `"id" : "m"`, 1))
+		for name, maps := range map[string][]store.MapInput{
+			"no raw map":     nil,
+			"another raw":    {{Source: "user", Raw: other}},
+			"extra raw":      {{Source: "user", Raw: mapRaw}, {Source: "user", Raw: other}},
+			"wrong source":   {{Source: "preset", Raw: mapRaw}},
+			"same raw twice": {{Source: "user", Raw: mapRaw}, {Source: "user", Raw: mapRaw}},
+		} {
+			if _, err := s.Save(store.Input{Raw: raw, Maps: maps}, conv()); !errors.Is(err, store.ErrMismatch) {
+				t.Errorf("%s: want ErrMismatch, got %v", name, err)
+			}
+		}
+		if rc, _ := s.Receipts(0); len(rc) != 0 {
+			t.Fatalf("refused saves left %d receipts", len(rc))
+		}
+		in := conv()
+		if in.Counts.Locations != 1 {
+			t.Fatalf("locations %d", in.Counts.Locations)
+		}
+		if _, err := s.Save(store.Input{Raw: raw, Maps: store.MapsOf([]*sourceevidence.LoadedMap{lm})}, in); err != nil {
+			t.Fatal(err)
+		}
+		if b, err := s.MapRaw(in.Maps[0].SHA256); err != nil || !bytes.Equal(b, mapRaw) {
+			t.Fatalf("MapRaw: %v equal=%v", err, bytes.Equal(b, mapRaw))
+		}
+		if b, _ := s.MapRaw(strings.Repeat("0", 64)); b != nil {
+			t.Fatal("unknown map returned bytes")
+		}
+		got, _ := s.Interpretation(in.ID)
+		if got == nil || !bytes.Equal(marshal(t, got), marshal(t, in)) {
+			t.Fatal("interpretation with a map did not round-trip")
+		}
+		o := open(t, "org-map-other-"+stamp)
+		if b, _ := o.MapRaw(in.Maps[0].SHA256); b != nil {
+			t.Fatal("MapRaw opens another organization's map")
+		}
+	})
+
 	t.Run("newest first and limit", func(t *testing.T) {
 		s := open(t, "org-ord-"+stamp)
 		var ids []string
@@ -366,8 +421,8 @@ func TestPgOpenDoesNotCreateSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.Close()
-	if n := tablesIn(); n != 3 {
-		t.Fatalf("ingest path created %d tables, want 3", n)
+	if n := tablesIn(); n != 4 {
+		t.Fatalf("ingest path created %d tables, want 4", n)
 	}
 	r, err := store.OpenPgStoreIn(ctx, scoped, "acme")
 	if err != nil {

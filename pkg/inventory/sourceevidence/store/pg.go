@@ -30,6 +30,18 @@ CREATE TABLE IF NOT EXISTS pqcota_source_inputs (
     PRIMARY KEY (org, sha256)
 );
 
+-- 매핑 설정 원문(A2). 결과는 원문 해시로 가리킨다(본문의 maps[].sha256). 같은 원문은 한 번만 둔다.
+CREATE TABLE IF NOT EXISTS pqcota_source_maps (
+    org         TEXT NOT NULL,
+    sha256      TEXT NOT NULL,
+    raw         BYTEA NOT NULL,
+    source      TEXT NOT NULL,   -- preset·user
+    map_id      TEXT NOT NULL,
+    revision    TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, sha256)
+);
+
 -- 변환 결과(불변). 갱신·삭제하지 않는다. body는 저장할 때의 JSON 바이트 그대로이고 body_sha256으로 같은지 본다.
 CREATE TABLE IF NOT EXISTS pqcota_source_interpretations (
     seq               BIGSERIAL PRIMARY KEY,
@@ -48,6 +60,8 @@ CREATE TABLE IF NOT EXISTS pqcota_source_interpretations (
     UNIQUE (org, id),
     FOREIGN KEY (org, input_sha256) REFERENCES pqcota_source_inputs(org, sha256)
 );
+-- A2에서 더한 열. 이 열이 없던 개발 중 테이블에도 붙는다(그 행은 설정 없이 변환한 것이라 빈 목록이 맞다).
+ALTER TABLE pqcota_source_interpretations ADD COLUMN IF NOT EXISTS maps JSONB NOT NULL DEFAULT '[]'::jsonb;
 CREATE INDEX IF NOT EXISTS idx_pqcota_srcint_org ON pqcota_source_interpretations(org, seq DESC);
 
 -- 수신 기록 — 받을 때마다 1행. 같은 것을 다시 받아도 내용 행은 늘지 않고 여기만 는다.
@@ -108,7 +122,7 @@ func OpenPgStoreIn(ctx context.Context, dsn, organization string) (*PgStore, err
 }
 
 // tables — 소스 근거 테이블 전부. 하나라도 없으면 스키마가 없는 것으로 본다.
-var tables = []string{"pqcota_source_inputs", "pqcota_source_interpretations", "pqcota_source_receipts"}
+var tables = []string{"pqcota_source_inputs", "pqcota_source_maps", "pqcota_source_interpretations", "pqcota_source_receipts"}
 
 func checkSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	var missing []string
@@ -160,6 +174,10 @@ func (p *PgStore) Save(in Input, interp *sourceevidence.Interpretation) (Receipt
 	if err != nil {
 		return Receipt{}, err
 	}
+	mapRefs, err := json.Marshal(pr.summary.Maps)
+	if err != nil {
+		return Receipt{}, err
+	}
 
 	ctx := context.Background()
 	tx, err := p.pool.Begin(ctx)
@@ -176,13 +194,20 @@ func (p *PgStore) Save(in Input, interp *sourceevidence.Interpretation) (Receipt
 		return Receipt{}, err
 	}
 	r.NewInput = tag.RowsAffected() == 1
+	for _, m := range pr.maps {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO pqcota_source_maps(org,sha256,raw,source,map_id,revision) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+			p.org, m.ref.SHA256, m.raw, m.ref.Source, m.ref.ID, m.ref.Revision); err != nil {
+			return Receipt{}, err
+		}
+	}
 
 	tag, err = tx.Exec(ctx,
 		`INSERT INTO pqcota_source_interpretations
-		   (org,id,input_sha256,schema_version,converter_version,spec_version,rules,counts,producer,body,body_sha256)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (org,id) DO NOTHING`,
+		   (org,id,input_sha256,schema_version,converter_version,spec_version,rules,counts,producer,body,body_sha256,maps)
+		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (org,id) DO NOTHING`,
 		p.org, pr.summary.ID, pr.inputSHA, pr.summary.SchemaVersion, pr.summary.ConverterVersion,
-		pr.summary.SpecVersion, rules, counts, producer, pr.body, pr.bodySHA)
+		pr.summary.SpecVersion, rules, counts, producer, pr.body, pr.bodySHA, mapRefs)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -217,7 +242,7 @@ func (p *PgStore) Interpretations(limit int) ([]Summary, error) {
 		limit = defaultLimit
 	}
 	rows, err := p.pool.Query(context.Background(),
-		`SELECT id,input_sha256,spec_version,schema_version,converter_version,rules,counts,producer,created_at
+		`SELECT id,input_sha256,spec_version,schema_version,converter_version,rules,counts,producer,maps,created_at
 		 FROM pqcota_source_interpretations WHERE org=$1 ORDER BY seq DESC LIMIT $2`, p.org, limit)
 	if err != nil {
 		return nil, err
@@ -226,13 +251,13 @@ func (p *PgStore) Interpretations(limit int) ([]Summary, error) {
 	var out []Summary
 	for rows.Next() {
 		var s Summary
-		var rules, counts, producer []byte
+		var rules, counts, producer, maps []byte
 		if err := rows.Scan(&s.ID, &s.InputSHA256, &s.SpecVersion, &s.SchemaVersion, &s.ConverterVersion,
-			&rules, &counts, &producer, &s.CreatedAt); err != nil {
+			&rules, &counts, &producer, &maps, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		if err := errors.Join(json.Unmarshal(rules, &s.Rules), json.Unmarshal(counts, &s.Counts),
-			json.Unmarshal(producer, &s.Producer)); err != nil {
+			json.Unmarshal(producer, &s.Producer), json.Unmarshal(maps, &s.Maps)); err != nil {
 			return nil, err
 		}
 		s.CreatedAt = s.CreatedAt.UTC()
@@ -252,6 +277,16 @@ func (p *PgStore) Interpretation(id string) (*sourceevidence.Interpretation, err
 		return nil, err
 	}
 	return decodeInterpretation(body)
+}
+
+func (p *PgStore) MapRaw(sha string) ([]byte, error) {
+	var raw []byte
+	err := p.pool.QueryRow(context.Background(),
+		`SELECT raw FROM pqcota_source_maps WHERE org=$1 AND sha256=$2`, p.org, sha).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return raw, err
 }
 
 func (p *PgStore) InputRaw(sha string) ([]byte, error) {

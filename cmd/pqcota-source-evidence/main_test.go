@@ -295,3 +295,42 @@ func TestReceiptsTruncation(t *testing.T) {
 	save(t, st, sampleA, "web-02")
 	check(true, "received more than 100 times · target nodes in the latest 100 receipts (user-specified): web-02, web-01")
 }
+
+func TestPresetsAndMapExport(t *testing.T) {
+	var out bytes.Buffer
+	if err := presets(opts{}, &out); err != nil || !strings.Contains(out.String(), "cdxgen-dotnet-sourcelocation@1\n    checked against cdxgen 13.7.0") {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	mapRaw := []byte(`{"format":"pqcota-source-map/v1","id":"m","revision":"2","rules":[{"id":"r","componentTypes":["cryptographic-asset"],
+	  "locations":{"from":"component","combined":{"property":"x:loc","parser":"path:line"},"lineBase":1}}]}`)
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[{"type":"cryptographic-asset","name":"A","properties":[{"name":"x:loc","value":"a.c:3"}]}]}`
+	lm, err := sourceevidence.LoadMap(mapRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := sourceevidence.ConvertWith([]byte(raw), sourceevidence.DefaultLimits, []*sourceevidence.LoadedMap{lm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.NewMemStoreIn("acme")
+	if _, err := st.Save(store.Input{Raw: []byte(raw), Maps: store.MapsOf([]*sourceevidence.LoadedMap{lm})}, in); err != nil {
+		t.Fatal(err)
+	}
+	_, list, _ := runArgs(t, st)
+	if !strings.Contains(list, "    mapping user m@2\n") {
+		t.Fatalf("list lacks the mapping\n%s", list)
+	}
+	dst := filepath.Join(t.TempDir(), "m.json")
+	if code, _, errs := runArgs(t, st, "--map", in.Maps[0].SHA256, "--out", dst); code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	if b, _ := os.ReadFile(dst); !bytes.Equal(b, mapRaw) {
+		t.Fatal("exported mapping differs")
+	}
+	if _, err := parse([]string{"--map", "x", "--input", "y", "--out", "z"}, io.Discard); err == nil {
+		t.Fatal("--map with --input accepted")
+	}
+	if _, err := parse([]string{"--presets", "--id", "x"}, io.Discard); err == nil {
+		t.Fatal("--presets with --id accepted")
+	}
+}

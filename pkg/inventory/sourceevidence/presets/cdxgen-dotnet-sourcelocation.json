@@ -1,0 +1,18 @@
+{
+  "format": "pqcota-source-map/v1",
+  "id": "cdxgen-dotnet-sourcelocation",
+  "revision": "1",
+  "rules": [
+    {
+      "id": "cdx-crypto-sourcelocation",
+      "componentTypes": ["cryptographic-asset"],
+      "locations": {
+        "from": "component",
+        "combined": {"property": "cdx:crypto:sourceLocation", "each": true, "parser": "path:line:column"},
+        "lineBase": 1,
+        "columnBase": "unknown",
+        "columnUnit": "unknown"
+      }
+    }
+  ]
+}

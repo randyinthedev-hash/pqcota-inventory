@@ -32,11 +32,16 @@ const maxSourceEvidenceInput = 32 << 20
 const OutputFormat = "pqcota-source-evidence/v1"
 
 type seOpts struct {
-	dryRun bool
-	json   bool
-	input  string
-	node   string
+	dryRun         bool
+	json           bool
+	input          string
+	node           string
+	preset         string // 내장 프리셋 id
+	sourceMap      string // 사용자 매핑 설정 파일
+	allowUnmatched bool   // 한 번도 맞지 않은 규칙이 있어도 위치 없이 계속한다(사용자가 밝힌 경우만)
 }
+
+const seUsage = "usage: pqcota-cbom-ingest <cbom.json | -> [target-node-id] --source-evidence [--preset <id>] [--source-map <file>] [--allow-unmatched-rules] [--dry-run] [--json]"
 
 // parseSourceEvidence — 옵션(`-`로 시작하고 `-` 하나가 아닌 인자)이 하나도 없으면 handled=false(기존 경로).
 // 옵션이 하나라도 있으면 여기서 처리하고, 모르는 옵션은 종료 코드 2로 멈춘다 — 기존 경로는 옵션을 모르고
@@ -44,15 +49,46 @@ type seOpts struct {
 // 플래그는 위치 인자 앞뒤 어디에 와도 된다(설계 §5.4의 예가 뒤에 붙인다).
 func parseSourceEvidence(args []string) (o seOpts, handled bool, err error) {
 	var se bool
-	var pos, unknown []string
-	for _, a := range args {
-		switch a {
-		case "--source-evidence":
+	var pos, unknown, problems []string
+	// value — `--name value`와 `--name=value`. 값이 없거나 두 번 주면 문제로 모은다.
+	value := func(name string, i *int, a string, dst *string) {
+		handled = true
+		v, inline := "", false
+		if strings.HasPrefix(a, name+"=") {
+			v, inline = strings.TrimPrefix(a, name+"="), true
+		}
+		if !inline {
+			if *i+1 >= len(args) {
+				problems = append(problems, name+" needs a value")
+				return
+			}
+			*i++
+			v = args[*i]
+		}
+		switch {
+		case v == "" || strings.HasPrefix(v, "-"):
+			problems = append(problems, fmt.Sprintf("%s needs a value, got %q", name, v))
+		case *dst != "":
+			problems = append(problems, name+" is given twice")
+		default:
+			*dst = v
+		}
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--source-evidence":
 			se, handled = true, true
-		case "--dry-run":
+		case a == "--dry-run":
 			o.dryRun, handled = true, true
-		case "--json":
+		case a == "--json":
 			o.json, handled = true, true
+		case a == "--allow-unmatched-rules":
+			o.allowUnmatched, handled = true, true
+		case a == "--preset" || strings.HasPrefix(a, "--preset="):
+			value("--preset", &i, a, &o.preset)
+		case a == "--source-map" || strings.HasPrefix(a, "--source-map="):
+			value("--source-map", &i, a, &o.sourceMap)
 		default:
 			if strings.HasPrefix(a, "-") && a != "-" {
 				unknown = append(unknown, a)
@@ -68,10 +104,13 @@ func parseSourceEvidence(args []string) (o seOpts, handled bool, err error) {
 	if len(unknown) > 0 {
 		return o, true, fmt.Errorf("unknown option %s — nothing was written", strings.Join(unknown, " "))
 	}
+	if len(problems) > 0 {
+		return o, true, fmt.Errorf("%s — nothing was written", strings.Join(problems, "; "))
+	}
 	// --dry-run만 주고 --source-evidence를 빠뜨리면 기존 경로가 스냅샷을 쓴다. 미리보기인 줄 알고
 	// 적재하는 일을 막으려고 멈춘다.
 	if !se {
-		return o, true, errors.New("--dry-run and --json only work with --source-evidence; without it this command writes a runtime snapshot — nothing was written")
+		return o, true, errors.New("these options only work with --source-evidence; without it this command writes a runtime snapshot — nothing was written")
 	}
 	switch len(pos) {
 	case 1:
@@ -79,7 +118,7 @@ func parseSourceEvidence(args []string) (o seOpts, handled bool, err error) {
 	case 2:
 		o.input, o.node = pos[0], pos[1]
 	default:
-		return o, true, errors.New("usage: pqcota-cbom-ingest <cbom.json | -> [target-node-id] --source-evidence [--dry-run] [--json]")
+		return o, true, errors.New(seUsage)
 	}
 	return o, true, nil
 }
@@ -151,7 +190,42 @@ type seJSON struct {
 	StoreKind      storeKind                      `json:"storeKind"`  // "memory"·"postgres", 저장하지 않았으면 ""
 	Persistent     bool                           `json:"persistent"` // 프로세스가 끝난 뒤에도 남는가
 	Receipt        *store.Receipt                 `json:"receipt"`
+	Refused        bool                           `json:"refused"`  // 매핑 오류로 저장하지 않았다(미리보기면 저장하지 않을 것이다)
+	Refusals       []sourceevidence.Diagnostic    `json:"refusals"` // 그 이유. 없으면 빈 목록
 	Interpretation *sourceevidence.Interpretation `json:"interpretation"`
+}
+
+// loadMaps — 프리셋, 사용자 설정 순서. 설정이 잘못됐으면 변환하지 않는다(설계 §5.4).
+func loadMaps(o seOpts) ([]*sourceevidence.LoadedMap, error) {
+	var out []*sourceevidence.LoadedMap
+	if o.preset != "" {
+		lm, err := sourceevidence.LoadPreset(o.preset)
+		if err != nil {
+			var ids []string
+			for _, p := range sourceevidence.Presets() {
+				ids = append(ids, p.ID)
+			}
+			return nil, fmt.Errorf("%w (presets: %s)", err, strings.Join(ids, ", "))
+		}
+		out = append(out, lm)
+	}
+	if o.sourceMap != "" {
+		f, err := os.Open(o.sourceMap)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := readLimited(f, sourceevidence.MaxMapBytes)
+		f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("source map: %w", err)
+		}
+		lm, err := sourceevidence.LoadMap(raw)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, lm)
+	}
+	return out, nil
 }
 
 // runSourceEvidence — 종료 코드를 돌려준다. 저장에 실패하면 성공을 찍지 않는다(설계 §6).
@@ -161,15 +235,24 @@ func runSourceEvidence(o seOpts, stdin io.Reader, stdout, stderr io.Writer, open
 		fmt.Fprintln(stderr, "read:", err)
 		return 1
 	}
-	interp, err := sourceevidence.Convert(raw, sourceevidence.DefaultLimits)
+	maps, err := loadMaps(o)
+	if err != nil {
+		fmt.Fprintln(stderr, "✗ mapping not usable, nothing was written:", err)
+		return 2
+	}
+	interp, err := sourceevidence.ConvertWith(raw, sourceevidence.DefaultLimits, maps)
 	if err != nil {
 		fmt.Fprintln(stderr, "✗ not converted, nothing was written:", err)
 		return 1
 	}
+	refusals := sourceevidence.Refusals(interp, o.allowUnmatched)
+	if refusals == nil {
+		refusals = []sourceevidence.Diagnostic{}
+	}
 
 	var rc *store.Receipt
 	var backing storeKind
-	if !o.dryRun {
+	if !o.dryRun && len(refusals) == 0 {
 		// 미리보기는 저장소를 열지도 않는다 — 스키마 자동 생성도 DB 쓰기다.
 		st, closeFn, b, err := open()
 		if err != nil {
@@ -177,7 +260,7 @@ func runSourceEvidence(o seOpts, stdin io.Reader, stdout, stderr io.Writer, open
 			return 1
 		}
 		defer closeFn()
-		r, err := st.Save(store.Input{NodeID: o.node, Raw: raw}, interp)
+		r, err := st.Save(store.Input{NodeID: o.node, Raw: raw, Maps: store.MapsOf(maps)}, interp)
 		if err != nil {
 			fmt.Fprintln(stderr, "✗ not stored:", err)
 			return 1
@@ -189,8 +272,13 @@ func runSourceEvidence(o seOpts, stdin io.Reader, stdout, stderr io.Writer, open
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(seJSON{Format: OutputFormat, Kind: "ingest", DryRun: o.dryRun, TargetNode: o.node,
-			Stored: rc != nil, StoreKind: backing, Persistent: backing.persistent(), Receipt: rc, Interpretation: interp}); err != nil {
+			Stored: rc != nil, StoreKind: backing, Persistent: backing.persistent(), Receipt: rc,
+			Refused: len(refusals) > 0, Refusals: refusals, Interpretation: interp}); err != nil {
 			fmt.Fprintln(stderr, "write:", err)
+			return 1
+		}
+		if len(refusals) > 0 {
+			fmt.Fprintf(stderr, "✗ not stored: %d mapping problems\n", len(refusals))
 			return 1
 		}
 		return 0
@@ -202,6 +290,23 @@ func runSourceEvidence(o seOpts, stdin io.Reader, stdout, stderr io.Writer, open
 		fmt.Fprint(stdout, "target node     not given\n")
 	}
 	view.Interpretation(stdout, interp, int64(len(raw)))
+	if len(refusals) > 0 {
+		verb := "✗ not stored"
+		if o.dryRun {
+			verb = "✗ dry run: this would not be stored"
+		}
+		fmt.Fprintf(stdout, "\n%s — %d mapping problems (a mapping you named must convert without errors):\n", verb, len(refusals))
+		for _, d := range refusals {
+			fmt.Fprintf(stdout, "    %s %s %s\n", d.Code, view.Safe(d.Pointer), view.Safe(d.Detail))
+		}
+		for _, d := range refusals {
+			if d.Code == sourceevidence.DiagMapRuleUnmatched {
+				fmt.Fprintln(stdout, "  a rule that matched nothing may be a mistake in the mapping; --allow-unmatched-rules continues without its locations.")
+				break
+			}
+		}
+		return 1
+	}
 	if rc == nil {
 		fmt.Fprintln(stdout, "\ndry run: nothing was written.")
 		return 0

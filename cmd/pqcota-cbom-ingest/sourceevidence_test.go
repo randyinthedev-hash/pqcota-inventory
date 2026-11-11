@@ -81,7 +81,6 @@ func TestParseSourceEvidence(t *testing.T) {
 	bad := []string{
 		"a.json web-01 --dry-run",
 		"a.json web-01 --json",
-		"a.json web-01 --source-evidence --preset x",
 		// 플래그 철자를 틀리거나 아직 없는 옵션을 주면 기존 경로로 넘어가 스냅샷을 쓰지 않는다.
 		"a.json web-01 --source-map map.json",
 		"a.json web-01 --source-evidense",
@@ -255,5 +254,154 @@ func TestJSONSaysWhetherPersistent(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil || !got.Stored || got.StoreKind != "postgres" || !got.Persistent {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// A2 — 계약 검토 §5의 고정 입력과 같은 꼴.
+const dupCBOM = `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+  {"type":"cryptographic-asset","name":"RSA","cryptoProperties":{"assetType":"algorithm"},
+   "properties":[{"name":"example:sourceLocation","value":"src/Wrap.cs:12:5"},{"name":"example:note","value":"unrelated"},
+     {"name":"example:sourceLocation","value":"src/Wrap.cs:12:5"},{"name":"example:sourceLocation","value":"src/Wrap.cs:30:9"}]},
+  {"type":"cryptographic-asset","name":"SHA-256","cryptoProperties":{"assetType":"algorithm"},
+   "properties":[{"name":"example:sourceLocation","value":"src/Wrap.cs:12:5"}]}]}`
+
+func dupMapFile(t *testing.T, each bool, property string) string {
+	e := ""
+	if each {
+		e = `"each":true,`
+	}
+	body := `{"format":"pqcota-source-map/v1","id":"fx","revision":"1","rules":[{"id":"loc","componentTypes":["cryptographic-asset"],
+	  "locations":{"from":"component","combined":{"property":"` + property + `",` + e + `"parser":"path:line:column"},
+	  "lineBase":1,"columnBase":1,"columnUnit":"codepoint"}}]}`
+	p := filepath.Join(t.TempDir(), "map.json")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestParseMappingOptions(t *testing.T) {
+	ok := map[string]seOpts{
+		"a.json --source-evidence --preset dosai-cyclonedx-location":             {input: "a.json", preset: "dosai-cyclonedx-location"},
+		"a.json --source-evidence --preset=x --source-map=m.json":                {input: "a.json", preset: "x", sourceMap: "m.json"},
+		"a.json n --source-map m.json --allow-unmatched-rules --source-evidence": {input: "a.json", node: "n", sourceMap: "m.json", allowUnmatched: true},
+	}
+	for line, want := range ok {
+		got, handled, err := parseSourceEvidence(strings.Fields(line))
+		if !handled || err != nil || got != want {
+			t.Errorf("%q: %+v %v, want %+v", line, got, err, want)
+		}
+	}
+	for _, line := range []string{
+		"a.json --source-evidence --preset",
+		"a.json --source-evidence --preset --dry-run",
+		"a.json --source-evidence --preset=",
+		"a.json --source-evidence --preset a --preset b",
+		"a.json --source-evidence --source-map -",
+		"a.json web-01 --preset x", // --source-evidence 없이
+	} {
+		if _, handled, err := parseSourceEvidence(strings.Fields(line)); !handled || err == nil {
+			t.Errorf("%q: accepted", line)
+		}
+	}
+}
+
+func TestUserMappingStored(t *testing.T) {
+	st, _ := store.NewMemStoreIn("")
+	mp := dupMapFile(t, true, "example:sourceLocation")
+	code, out, errs := run(t, seOpts{input: writeSample(t, dupCBOM), sourceMap: mp}, memOpener(t, st))
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
+	}
+	for _, want := range []string{
+		"mapping         user fx@1 · sha256 ",
+		"rule            fx/loc@1 · matched 2 components · 4 locations",
+		"    location src/Wrap.cs:12:5 (normalized, 1-based) ×2\n" +
+			"      from /components/0/properties/0 · rule fx/loc@1 · kind: not supplied · reported src/Wrap.cs:12:5\n" +
+			"      from /components/0/properties/2 · rule fx/loc@1 · kind: not supplied · reported src/Wrap.cs:12:5\n",
+		"✓ stored",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q\n%s", want, out)
+		}
+	}
+	l, _ := st.Interpretations(0)
+	in, _ := st.Interpretation(l[0].ID)
+	b, _ := os.ReadFile(mp)
+	if got, _ := st.MapRaw(in.Maps[0].SHA256); string(got) != string(b) {
+		t.Fatal("the mapping file was not stored as given")
+	}
+}
+
+func TestMappingErrorsRefuseToStore(t *testing.T) {
+	in := writeSample(t, dupCBOM)
+	// each 없이 값이 여럿 — 모호함. 미리보기·저장 모두 종료 코드 1, 저장소는 열지 않는다.
+	for _, dry := range []bool{true, false} {
+		code, out, _ := run(t, seOpts{input: in, sourceMap: dupMapFile(t, false, "example:sourceLocation"), dryRun: dry}, mustNotOpen(t))
+		if code != 1 || !strings.Contains(out, "1 mapping problems") || !strings.Contains(out, "map-ambiguous /components/0/properties fx/loc: 3 values") {
+			t.Fatalf("dry=%v: exit %d\n%s", dry, code, out)
+		}
+	}
+	code, out, _ := run(t, seOpts{input: in, sourceMap: dupMapFile(t, false, "example:sourceLocation"), json: true}, mustNotOpen(t))
+	var got struct {
+		Stored   bool                        `json:"stored"`
+		Refused  bool                        `json:"refused"`
+		Refusals []sourceevidence.Diagnostic `json:"refusals"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); code != 1 || err != nil || got.Stored || !got.Refused || len(got.Refusals) != 1 {
+		t.Fatalf("json: %d %v %+v", code, err, got)
+	}
+
+	// 한 번도 맞지 않은 규칙 — 기본 거부, --allow-unmatched-rules면 위치 없이 저장.
+	nomatch := dupMapFile(t, true, "no:such")
+	code, out, _ = run(t, seOpts{input: in, sourceMap: nomatch}, mustNotOpen(t))
+	if code != 1 || !strings.Contains(out, "map-rule-unmatched") || !strings.Contains(out, "--allow-unmatched-rules continues") {
+		t.Fatalf("unmatched: exit %d\n%s", code, out)
+	}
+	st, _ := store.NewMemStoreIn("")
+	code, out, _ = run(t, seOpts{input: in, sourceMap: nomatch, allowUnmatched: true}, memOpener(t, st))
+	if code != 0 || !strings.Contains(out, "rule            fx/loc@1 · matched 0 components · 0 locations") {
+		t.Fatalf("allowed: exit %d\n%s", code, out)
+	}
+}
+
+func TestBadMappingIsAConfigError(t *testing.T) {
+	in := writeSample(t, dupCBOM)
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	os.WriteFile(bad, []byte(`{"format":"pqcota-source-map/v1","id":"x","revision":"1","rules":[{"id":"r","componentTypes":["cryptographic-asset"],"locations":{"from":"component","file":{"property":"f"},"lineBase":2}}]}`), 0o600)
+	code, out, errs := run(t, seOpts{input: in, sourceMap: bad}, mustNotOpen(t))
+	if code != 2 || out != "" || !strings.Contains(errs, "lineBase: must be 0, 1") {
+		t.Fatalf("bad map: %d %q %q", code, out, errs)
+	}
+	code, _, errs = run(t, seOpts{input: in, preset: "nope"}, mustNotOpen(t))
+	if code != 2 || !strings.Contains(errs, "cdxgen-dotnet-sourcelocation") {
+		t.Fatalf("unknown preset: %d %q", code, errs)
+	}
+	code, _, errs = run(t, seOpts{input: in, sourceMap: filepath.Join(t.TempDir(), "missing.json")}, mustNotOpen(t))
+	if code != 2 {
+		t.Fatalf("missing map file: %d %q", code, errs)
+	}
+}
+
+func TestPresetDosai(t *testing.T) {
+	raw := `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+	  {"type":"cryptographic-asset","name":"RSA","cryptoProperties":{"assetType":"algorithm"},"properties":[{"name":"dosai:location","value":"Program.cs:32:9"}]},
+	  {"type":"data","name":"op","properties":[{"name":"dosai:location","value":"Program.cs:32:9"}]}]}`
+	st, _ := store.NewMemStoreIn("")
+	code, out, errs := run(t, seOpts{input: writeSample(t, raw), preset: "dosai-cyclonedx-location"}, memOpener(t, st))
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
+	}
+	for _, want := range []string{
+		"mapping         preset dosai-cyclonedx-location@1",
+		"checked against dosai 5.0.0.0 CycloneDX output",
+		"crypto components 1 · with a location 1 · without 0 · locations 1 · other components 1 (not read)",
+		"location Program.cs:32 (normalized, 1-based; column base unknown; column unit unknown)\n",
+		"reported Program.cs:32:9\n\n",
+		"reported Program.cs:32:9",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q\n%s", want, out)
+		}
 	}
 }

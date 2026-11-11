@@ -18,6 +18,7 @@ type MemStore struct {
 	org      org.ID
 	mu       sync.Mutex
 	inputs   map[string][]byte // sha → 원본
+	maps     map[string][]byte // sha → 설정 원문
 	interps  map[string]memInterp
 	order    []string // 변환 결과 ID, 저장 순서
 	receipts []Receipt
@@ -37,7 +38,7 @@ func NewMemStoreIn(organization string) (*MemStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &MemStore{org: o, inputs: map[string][]byte{}, interps: map[string]memInterp{}}, nil
+	return &MemStore{org: o, inputs: map[string][]byte{}, maps: map[string][]byte{}, interps: map[string]memInterp{}}, nil
 }
 
 // Org — 이 저장소가 묶인 조직.
@@ -59,6 +60,11 @@ func (m *MemStore) Save(in Input, interp *sourceevidence.Interpretation) (Receip
 	if _, ok := m.inputs[p.inputSHA]; !ok {
 		m.inputs[p.inputSHA] = bytes.Clone(in.Raw)
 		r.NewInput = true
+	}
+	for _, pm := range p.maps {
+		if _, ok := m.maps[pm.ref.SHA256]; !ok {
+			m.maps[pm.ref.SHA256] = bytes.Clone(pm.raw)
+		}
 	}
 	if _, ok := m.interps[p.summary.ID]; !ok {
 		m.interps[p.summary.ID] = memInterp{body: p.body, bodySHA: p.bodySHA, createdAt: now}
@@ -98,6 +104,16 @@ func (m *MemStore) Interpretation(id string) (*sourceevidence.Interpretation, er
 		return nil, nil
 	}
 	return decodeInterpretation(it.body)
+}
+
+func (m *MemStore) MapRaw(sha string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.maps[sha]
+	if !ok {
+		return nil, nil
+	}
+	return bytes.Clone(b), nil
 }
 
 func (m *MemStore) InputRaw(sha string) ([]byte, error) {

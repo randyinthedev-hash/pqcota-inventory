@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package sourceevidence — 외부 CycloneDX CBOM이 보고한 암호 정보와 소스 위치를 「소스 근거」로 바꾼다.
+// 표준 필드는 늘 읽고(A1), 매핑 설정(프리셋·사용자, A2)이 있으면 그 규칙도 함께 적용한다.
 //
 // 런타임 관측(스냅샷)과는 따로 둔다. 스냅샷의 finding을 만들지 않고, 노드의 최신 상태를 바꾸지 않는다.
 // 이 패키지는 변환만 한다(저장·화면은 다른 곳). 변환 결과는 불변이다 — 같은 입력·규칙·변환기 판이면
@@ -56,7 +57,9 @@ type Interpretation struct {
 	SpecVersion      string       `json:"specVersion"` // 본문이 선언한 판 그대로
 	Rules            []RuleRef    `json:"rules"`
 	ExcludedRuleIDs  []string     `json:"excludedRuleIds"`
-	Producer         []Field      `json:"producer"` // metadata.tools가 보고한 도구(이름·판·만든 곳)
+	Maps             []MapRef     `json:"maps"`        // 쓴 설정(프리셋·사용자). 표준 규칙만 썼으면 빈 목록
+	RuleMatches      []RuleMatch  `json:"ruleMatches"` // 표준 규칙이 아닌 규칙마다의 맞은 수
+	Producer         []Field      `json:"producer"`    // metadata.tools가 보고한 도구(이름·판·만든 곳)
 	Counts           Counts       `json:"counts"`
 	Items            []Item       `json:"items"`
 	Diagnostics      []Diagnostic `json:"diagnostics"`

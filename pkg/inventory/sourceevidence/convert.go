@@ -50,11 +50,22 @@ var primitives = map[string]map[string]bool{
 	"1.7": set("drbg", "mac", "block-cipher", "stream-cipher", "signature", "hash", "pke", "xof", "kdf", "key-agree", "kem", "ae", "combiner", "key-wrap", "other", "unknown"),
 }
 
-// Convert — 표준 규칙으로 읽는다. A1은 표준 규칙만 있다(프리셋·사용자 매핑은 A2).
+// Convert — 표준 규칙만으로 읽는다. ConvertWith(raw, lim, nil)과 같다.
+func Convert(raw []byte, lim Limits) (*Interpretation, error) { return ConvertWith(raw, lim, nil) }
+
+// ConvertWith — 표준 규칙과 매핑 설정(프리셋·사용자)으로 읽는다. 규칙은 표준, 설정 순서, 설정 안의 순서로 적용한다.
+// 설정마다 id가 달라야 한다(규칙 식별 「설정 id/규칙 id」가 겹치지 않게).
 //
 // 해석 대상 필드는 「없음」과 「자료형이 틀림」을 구분한다. 없으면 조용히 넘어가고(정상 입력), 있는데
 // 자료형이 틀리면 wrong-type으로 알린다 — 틀린 구조를 「항목 없음」처럼 보이게 두지 않는다.
-func Convert(raw []byte, lim Limits) (*Interpretation, error) {
+func ConvertWith(raw []byte, lim Limits, maps []*LoadedMap) (*Interpretation, error) {
+	seen := map[string]bool{}
+	for _, lm := range maps {
+		if seen[lm.Map.ID] {
+			return nil, fmt.Errorf("%w: two maps with id %q", ErrBadMap, lm.Map.ID)
+		}
+		seen[lm.Map.ID] = true
+	}
 	doc, err := decode(raw)
 	if err != nil {
 		return nil, err
@@ -79,14 +90,26 @@ func Convert(raw []byte, lim Limits) (*Interpretation, error) {
 		SpecVersion:      spec,
 		Rules:            []RuleRef{rule},
 		ExcludedRuleIDs:  []string{},
+		Maps:             []MapRef{},
+		RuleMatches:      []RuleMatch{},
 		Producer:         []Field{},
 		Items:            []Item{},
 		Diagnostics:      []Diagnostic{},
 		Counts:           Counts{Diagnostics: map[string]int{}},
 	}
+	var applied []appliedRule
+	for _, lm := range maps {
+		in.Maps = append(in.Maps, MapRef{Source: lm.Source, ID: lm.Map.ID, Revision: lm.Map.Revision, SHA256: sha256Hex(lm.Raw)})
+		for _, r := range lm.Map.Rules {
+			ref := ruleRef(lm.Source, lm.Map, r)
+			in.Rules = append(in.Rules, ref)
+			in.RuleMatches = append(in.RuleMatches, RuleMatch{Rule: ref})
+			applied = append(applied, appliedRule{ref: ref, spec: r.Loc})
+		}
+	}
 	in.ID = interpretationID(in)
 
-	c := &converter{in: in, spec: spec, rule: rule, lim: lim}
+	c := &converter{in: in, spec: spec, rule: rule, lim: lim, rules: applied}
 	c.producer(obj)
 	if v, present := obj["components"]; present {
 		if arr, ok := v.([]any); ok {
@@ -95,6 +118,12 @@ func Convert(raw []byte, lim Limits) (*Interpretation, error) {
 			}
 		} else {
 			in.Diagnostics = append(in.Diagnostics, wrongType("/components", "array", v))
+		}
+	}
+	for _, m := range in.RuleMatches {
+		if m.Components == 0 {
+			in.Diagnostics = append(in.Diagnostics, Diagnostic{Code: DiagMapRuleUnmatched,
+				Detail: m.Rule.ID + ": matched no component in this input"})
 		}
 	}
 	for _, it := range in.Items {
@@ -123,6 +152,7 @@ type converter struct {
 	rule  RuleRef
 	lim   Limits
 	total int
+	rules []appliedRule // 매핑 규칙. 결과의 RuleMatches와 같은 순서
 }
 
 // components — components 배열 하나(자료형은 부른 쪽이 확인했다).
@@ -214,6 +244,16 @@ func (c *converter) item(comp map[string]any, ptr string) (Item, error) {
 					it.Locations = append(it.Locations, l)
 				}
 			}
+		}
+	}
+	for i, r := range c.rules {
+		before := len(it.Locations)
+		if c.applyRule(r, comp, ptr, &it) {
+			c.in.RuleMatches[i].Components++
+		}
+		c.in.RuleMatches[i].Locations += len(it.Locations) - before
+		if len(it.Locations) > c.lim.MaxLocationsPerItem {
+			return it, fmt.Errorf("%w: more than %d locations at %s", ErrLimitExceeded, c.lim.MaxLocationsPerItem, ptr)
 		}
 	}
 	return it, nil
@@ -581,7 +621,7 @@ func digest(parts ...any) string {
 }
 
 func interpretationID(in *Interpretation) string {
-	return digest("interpretation", in.SchemaVersion, in.ConverterVersion, in.InputSHA256, in.Rules, in.ExcludedRuleIDs)
+	return digest("interpretation", in.SchemaVersion, in.ConverterVersion, in.InputSHA256, in.Rules, in.ExcludedRuleIDs, in.Maps)
 }
 
 // IDMatches — ID가 입력 해시·규칙·제외 목록·판에서 다시 계산한 값과 같은가. 저장소가 받기 전에 본다 —

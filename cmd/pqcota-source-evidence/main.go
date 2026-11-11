@@ -7,6 +7,8 @@
 //	pqcota-source-evidence [--limit N] [--json]                # 변환 결과 목록(최근 것부터)
 //	pqcota-source-evidence --id <interpretation-id> [--json]    # 한 변환 결과의 항목·위치·수신 기록
 //	pqcota-source-evidence --input <sha256> --out <file>        # 받은 원본을 그대로 파일로(있는 파일은 덮지 않는다)
+//	pqcota-source-evidence --map <sha256> --out <file>          # 변환에 쓴 매핑 설정 원문을 그대로 파일로
+//	pqcota-source-evidence --presets [--json]                   # 내장 프리셋 목록(DB를 열지 않는다)
 //
 // env PQCOTA_DSN 필수 — pqcota-cbom-ingest가 쓴 저장소. 인메모리 저장은 프로세스 사이에 남지 않는다.
 // 대상 노드는 사용자가 적재할 때 준 이름 그대로다. 스코프 마스터와 대조하지 않았다.
@@ -36,9 +38,9 @@ import (
 const OutputFormat = "pqcota-source-evidence/v1"
 
 type opts struct {
-	id, input, out string
-	limit          int
-	json           bool
+	id, input, mapSHA, out string
+	limit                  int
+	json, presets          bool
 }
 
 func parse(args []string, stderr io.Writer) (opts, error) {
@@ -47,23 +49,32 @@ func parse(args []string, stderr io.Writer) (opts, error) {
 	fs.SetOutput(stderr)
 	fs.StringVar(&o.id, "id", "", "show one interpretation — items, locations and receipts")
 	fs.StringVar(&o.input, "input", "", "sha256 of a received input to write out as it was received (needs --out)")
-	fs.StringVar(&o.out, "out", "", "file to write the input to; an existing file is not overwritten")
+	fs.StringVar(&o.mapSHA, "map", "", "sha256 of a mapping file used for a conversion, to write out as stored (needs --out)")
+	fs.StringVar(&o.out, "out", "", "file to write the input or mapping to; an existing file is not overwritten")
+	fs.BoolVar(&o.presets, "presets", false, "list the built-in mapping presets (does not open the database)")
 	fs.IntVar(&o.limit, "limit", 0, "how many interpretations to list (default 100)")
 	fs.BoolVar(&o.json, "json", false, "machine-readable output ("+OutputFormat+")")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
+	modes := 0
+	for _, on := range []bool{o.id != "", o.input != "", o.mapSHA != "", o.presets} {
+		if on {
+			modes++
+		}
+	}
+	raw := o.input != "" || o.mapSHA != ""
 	switch {
 	case fs.NArg() > 0:
 		return o, fmt.Errorf("unexpected argument %q", fs.Arg(0))
-	case o.id != "" && o.input != "":
-		return o, errors.New("--id and --input cannot be used together")
-	case o.input != "" && o.out == "":
-		return o, errors.New("--input needs --out <file>: the input is written as received and is not printed to the terminal")
-	case o.out != "" && o.input == "":
-		return o, errors.New("--out only works with --input")
-	case o.input != "" && o.json:
-		return o, errors.New("--json does not apply to --input")
+	case modes > 1:
+		return o, errors.New("use only one of --id, --input, --map, --presets")
+	case raw && o.out == "":
+		return o, errors.New("--input and --map need --out <file>: the bytes are written as stored and are not printed to the terminal")
+	case o.out != "" && !raw:
+		return o, errors.New("--out only works with --input or --map")
+	case raw && o.json:
+		return o, errors.New("--json does not apply to --input or --map")
 	}
 	return o, nil
 }
@@ -75,6 +86,13 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(2)
+	}
+	if o.presets {
+		if err := presets(o, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 	dsn := os.Getenv("PQCOTA_DSN")
 	if dsn == "" {
@@ -102,7 +120,9 @@ func run(o opts, st store.Store, organization string, stdout, stderr io.Writer) 
 	var err error
 	switch {
 	case o.input != "":
-		err = writeInput(st, o.input, o.out, stderr)
+		err = writeRaw(st.InputRaw, "input", o.input, o.out, stderr)
+	case o.mapSHA != "":
+		err = writeRaw(st.MapRaw, "mapping", o.mapSHA, o.out, stderr)
 	case o.id != "":
 		err = detail(st, o, organization, stdout)
 	default:
@@ -184,6 +204,7 @@ func list(st store.Store, o opts, organization string, w io.Writer) error {
 		fmt.Fprintf(w, "    stored %s · CycloneDX %s · %s\n", e.CreatedAt.Format("2006-01-02 15:04:05Z"),
 			view.Safe(e.SpecVersion), tools(e.Producer))
 		fmt.Fprintf(w, "    input sha256 %s\n", e.InputSHA256)
+		fmt.Fprintf(w, "    %s\n", mapsLine(e.Maps))
 		fmt.Fprintf(w, "    crypto components %d · with a location %d · locations %d · diagnostics %d\n",
 			c.Components, c.ItemsWithLocation, c.Locations, diags)
 		if e.ReceiptsTruncated {
@@ -212,6 +233,17 @@ func tools(fs []sourceevidence.Field) string {
 		return "reported tool " + ts[0]
 	}
 	return "reported tools " + strings.Join(ts, " | ")
+}
+
+func mapsLine(ms []sourceevidence.MapRef) string {
+	if len(ms) == 0 {
+		return "standard fields only (no mapping)"
+	}
+	parts := make([]string, len(ms))
+	for i, m := range ms {
+		parts[i] = view.Safe(m.Source) + " " + view.Safe(m.ID) + "@" + view.Safe(m.Revision)
+	}
+	return "mapping " + strings.Join(parts, ", ")
 }
 
 func nodeList(ns []string) string {
@@ -293,19 +325,19 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-// writeInput — 원본을 받은 바이트 그대로 파일에 쓴다. 터미널에는 찍지 않는다(제어 문자가 그대로 나간다).
-// 해시를 다시 재서 저장소가 준 바이트가 그 원본인지 확인한 뒤에 쓴다.
-func writeInput(st store.Store, sha, out string, stderr io.Writer) error {
-	raw, err := st.InputRaw(sha)
+// writeRaw — 저장된 바이트(원본·설정)를 그대로 파일에 쓴다. 터미널에는 찍지 않는다(제어 문자가 그대로 나간다).
+// 해시를 다시 재서 저장소가 준 바이트가 그것인지 확인한 뒤에 쓴다.
+func writeRaw(fetch func(string) ([]byte, error), what, sha, out string, stderr io.Writer) error {
+	raw, err := fetch(sha)
 	if err != nil {
-		return fmt.Errorf("reading input: %w", err)
+		return fmt.Errorf("reading %s: %w", what, err)
 	}
 	if raw == nil {
-		return fmt.Errorf("no input with sha256 %s in this organization", view.Safe(sha))
+		return fmt.Errorf("no %s with sha256 %s in this organization", what, view.Safe(sha))
 	}
 	sum := sha256.Sum256(raw)
 	if got := hex.EncodeToString(sum[:]); got != sha {
-		return fmt.Errorf("stored input does not match its sha256 (got %s) — not written", got)
+		return fmt.Errorf("stored %s does not match its sha256 (got %s) — not written", what, got)
 	}
 	f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -321,5 +353,28 @@ func writeInput(st store.Store, sha, out string, stderr io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stderr, "wrote %d bytes to %s · sha256 %s (checked)\n", len(raw), view.Safe(out), sha)
+	return nil
+}
+
+// presets — 내장 프리셋 목록. 어느 도구의 어느 판으로 확인했는지 함께 보인다.
+func presets(o opts, w io.Writer) error {
+	ps := sourceevidence.Presets()
+	if o.json {
+		type entry struct {
+			ID           string `json:"id"`
+			Revision     string `json:"revision"`
+			VerifiedWith string `json:"verifiedWith"`
+			Note         string `json:"note"`
+		}
+		es := make([]entry, len(ps))
+		for i, p := range ps {
+			es[i] = entry{p.ID, p.Revision, p.VerifiedWith, p.Note}
+		}
+		return writeJSON(w, map[string]any{"format": OutputFormat, "kind": "presets", "presets": es})
+	}
+	fmt.Fprintln(w, "built-in mapping presets — use with pqcota-cbom-ingest ... --source-evidence --preset <id>")
+	for _, p := range ps {
+		fmt.Fprintf(w, "\n%s@%s\n    checked against %s only; other versions are not promised\n    %s\n", p.ID, p.Revision, p.VerifiedWith, p.Note)
+	}
 	return nil
 }

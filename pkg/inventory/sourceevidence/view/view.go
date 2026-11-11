@@ -41,6 +41,19 @@ func Interpretation(w io.Writer, in *sourceevidence.Interpretation, size int64) 
 		rules[i] = r.String()
 	}
 	p("converter       %s · schema %s · rules %s\n", in.ConverterVersion, in.SchemaVersion, strings.Join(rules, ", "))
+	verified := map[string]string{}
+	for _, pr := range sourceevidence.Presets() {
+		verified[pr.ID+"@"+pr.Revision] = pr.VerifiedWith
+	}
+	for _, m := range in.Maps {
+		p("mapping         %s %s@%s · sha256 %s\n", Safe(m.Source), Safe(m.ID), Safe(m.Revision), m.SHA256)
+		if v := verified[m.ID+"@"+m.Revision]; m.Source == "preset" && v != "" {
+			p("                checked against %s only; other versions are not promised\n", v)
+		}
+	}
+	for _, rm := range in.RuleMatches {
+		p("rule            %s · matched %d components · %d locations\n", Safe(rm.Rule.String()), rm.Components, rm.Locations)
+	}
 	p("interpretation  %s\n\n", in.ID)
 
 	c := in.Counts
@@ -147,11 +160,21 @@ func itemTitle(it sourceevidence.Item) string {
 func Group(p func(string, ...any), g sourceevidence.Group) {
 	l := g.Locations[0]
 	norm := l.Normalized.Line != nil // 묶기는 정규화한 것과 보고값만 있는 것을 섞지 않는다
+	// 머리의 괄호 — 기준·단위를 모르는 것. 한 묶음 안에서는 같다(묶기가 같은 규칙이거나 같은 알려진 단위만 묶는다).
+	var notes []string
+	if l.Normalized.AbsentReason != "" {
+		notes = append(notes, Safe(l.Normalized.AbsentReason))
+	}
+	if l.Reported.Column != nil && l.ColumnUnit == "unknown" {
+		notes = append(notes, "column unit unknown")
+	}
 	head := "reported location " + coord(l.Reported.Path, l.Reported.Line, l.Reported.Column)
 	if norm {
-		head = "location " + coord(l.Normalized.Path, l.Normalized.Line, l.Normalized.Column) + " (normalized, 1-based)"
-	} else if l.Normalized.AbsentReason != "" {
-		head += " (" + Safe(l.Normalized.AbsentReason) + ")"
+		head = "location " + coord(l.Normalized.Path, l.Normalized.Line, l.Normalized.Column)
+		notes = append([]string{"normalized, 1-based"}, notes...)
+	}
+	if len(notes) > 0 {
+		head += " (" + strings.Join(notes, "; ") + ")"
 	}
 	if len(g.Locations) > 1 {
 		head += fmt.Sprintf(" ×%d", len(g.Locations))
@@ -182,7 +205,8 @@ func Group(p func(string, ...any), g sourceevidence.Group) {
 		}
 		p("      %s\n", strings.Join(parts, " · "))
 		for _, d := range x.Diagnostics {
-			if d.Code == sourceevidence.DiagLineBaseUnknown {
+			switch d.Code {
+			case sourceevidence.DiagLineBaseUnknown, sourceevidence.DiagColumnBaseUnknown, sourceevidence.DiagColumnUnitUnknown:
 				continue // 머리의 괄호가 이미 말한다
 			}
 			p("        ! %s %s %s\n", d.Code, Safe(d.Pointer), Safe(d.Detail))
