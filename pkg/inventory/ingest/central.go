@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	commonv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/common/v1"
 	discoveryv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/discovery/v1"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/scope"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/sign"
@@ -233,18 +234,27 @@ func IngestCBOM(raw []byte, targetNodeID string, verifySig func([]byte) bool, sn
 	if disp != Accepted {
 		return disp, nil // Rejected(검증실패)·NeedsScopeBinding(앵커없음)은 저장하지 않는다.
 	}
-	res := &discoveryv1.CollectionResult{
-		Envelope:             env, // ARTIFACT Envelope(SV-2)
-		CbomCyclonedx:        raw,
-		CyclonedxSpecVersion: "1.6",
-		// 받은 바이트를 그대로 원본으로 남긴다 — 본문은 내부 정규 버전으로 수렴할 수 있어
-		// 나중에 "무엇을 받았나"를 되짚으려면 수렴 전 바이트가 필요하다(§2.4 step 1).
-		RawCapture: raw,
-		RawFormat:  "external-cbom/cyclonedx",
-	}
+	res := cbomResult(raw, env)
 	snapID := snapshotPrefix + ":" + targetNodeID
 	if _, err := normalize.Normalize([]*discoveryv1.CollectionResult{res}, snapID, targetNodeID, rulesetVersion, store, nil); err != nil {
 		return disp, err
 	}
 	return Accepted, nil
+}
+
+// cbomResult — 검증을 통과한 CBOM을 정규화 입력으로 감싼다.
+//
+// 판은 본문이 선언한 값이다(ValidateCBOM이 1.6·1.7만 통과시킨다). 예전에는 1.7 입력도 "1.6"으로 적었다.
+//
+// RawCapture에 받은 바이트를 그대로 싣지만, **스냅샷 이력은 이것을 보관하지 않는다.** 정규화가 남기는 것은
+// finding·엣지·완전성뿐이다. 받은 CBOM 원문을 보관하려면 소스 근거 경로(pqcota-cbom-ingest --source-evidence,
+// sourceevidence/store)를 쓴다.
+func cbomResult(raw []byte, env *commonv1.Envelope) *discoveryv1.CollectionResult {
+	return &discoveryv1.CollectionResult{
+		Envelope:             env, // ARTIFACT Envelope(SV-2)
+		CbomCyclonedx:        raw,
+		CyclonedxSpecVersion: ValidateCBOM(raw).SpecVersion,
+		RawCapture:           raw,
+		RawFormat:            "external-cbom/cyclonedx",
+	}
 }
