@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/sourceevidence/store"
 )
 
-// 같은 위치를 두 번 보고한 RSA, 위치 없는 SHA-256, 대상 밖 컴포넌트 하나. 경로에 터미널 제어 문자가 있다.
+// 같은 줄을 두 번 보고하되 offset·symbol·문맥이 서로 다른 RSA, 위치 없는 SHA-256, 대상 밖 컴포넌트 하나. 경로에 터미널 제어 문자가 있다.
 const sample = `{"bomFormat":"CycloneDX","specVersion":"1.6",
  "metadata":{"tools":{"services":[{"name":"cbomkit","provider":{"name":"PQCA"}}]}},
  "components":[
@@ -25,7 +26,7 @@ const sample = `{"bomFormat":"CycloneDX","specVersion":"1.6",
    "cryptoProperties":{"assetType":"algorithm","algorithmProperties":{"primitive":"pke"}},
    "evidence":{"occurrences":[
      {"location":"src/Wrap.java","line":12,"offset":5,"additionalContext":"Cipher.getInstance"},
-     {"location":"src/Wrap.java","line":12,"offset":5,"additionalContext":"Cipher.getInstance"},
+     {"location":"src/Wrap.java","line":12,"offset":31,"symbol":"init"},
      {"location":"src/\u001b[31mEvil\u202e.java","line":3}]}},
   {"type":"cryptographic-asset","name":"SHA-256","cryptoProperties":{"assetType":"algorithm"}},
   {"type":"library","name":"bcprov"}
@@ -41,12 +42,12 @@ func writeSample(t *testing.T, body string) string {
 }
 
 func memOpener(t *testing.T, st store.Store) seStoreOpener {
-	return func() (store.Store, func(), string, error) { return st, func() {}, "test memory", nil }
+	return func() (store.Store, func(), storeKind, error) { return st, func() {}, storeMemory, nil }
 }
 
 // mustNotOpen — 미리보기·변환 실패에서 저장소를 열면(스키마 생성도 쓰기다) 실패한다.
 func mustNotOpen(t *testing.T) seStoreOpener {
-	return func() (store.Store, func(), string, error) {
+	return func() (store.Store, func(), storeKind, error) {
 		t.Fatal("the store was opened")
 		return nil, nil, "", nil
 	}
@@ -82,6 +83,11 @@ func TestParseSourceEvidence(t *testing.T) {
 		"a.json web-01 --dry-run",
 		"a.json web-01 --json",
 		"a.json web-01 --source-evidence --preset x",
+		// 플래그 철자를 틀리거나 아직 없는 옵션을 주면 기존 경로로 넘어가 스냅샷을 쓰지 않는다.
+		"a.json web-01 --source-map map.json",
+		"a.json web-01 --source-evidense",
+		"a.json web-01 --dryrun",
+		"--help",
 		"--source-evidence",
 		"a b c --source-evidence",
 	}
@@ -102,11 +108,9 @@ func TestDryRunWritesNothing(t *testing.T) {
 		"target node     web-01 (recorded as given; not checked against the scope master)",
 		"reported tool   provider.name = PQCA",
 		"crypto components 2 · with a location 1 · without 1 · locations 3 · other components 1 (not read)",
-		"reported location src/Wrap.java:12 (line base unknown) ×2 · kind: not supplied · rule standard-occurrences@1",
-		"from /components/0/evidence/occurrences/0",
-		"from /components/0/evidence/occurrences/1",
-		"offset 5 (unit and base not defined; kept as reported)",
-		"context Cipher.getInstance",
+		"    reported location src/Wrap.java:12 (line base unknown) ×2\n" +
+			"      from /components/0/evidence/occurrences/0 · rule standard-occurrences@1 · kind: not supplied · offset 5 (unit undefined) · context Cipher.getInstance\n" +
+			"      from /components/0/evidence/occurrences/1 · rule standard-occurrences@1 · kind: not supplied · offset 31 (unit undefined) · symbol init\n",
 		"/components/0  RSA-2048  assetType=algorithm primitive=pke",
 		"no location reported",
 		"dry run: nothing was written.",
@@ -128,7 +132,7 @@ func TestStoreAndReceiveAgain(t *testing.T) {
 	}
 	in := writeSample(t, sample)
 	code, out, errs := run(t, seOpts{input: in, node: "web-01"}, memOpener(t, st))
-	if code != 0 || !strings.Contains(out, "✓ stored in test memory: receipt #1 · new input: yes · new interpretation: yes") {
+	if code != 0 || !strings.Contains(out, "✓ stored in in-memory (gone when the process exits): receipt #1 · new input: yes · new interpretation: yes") {
 		t.Fatalf("first: exit %d\n%s\n%s", code, out, errs)
 	}
 	code, out, _ = run(t, seOpts{input: in, node: "web-02"}, memOpener(t, st))
@@ -157,6 +161,8 @@ func TestJSONOutput(t *testing.T) {
 			Format         string                         `json:"format"`
 			DryRun         bool                           `json:"dryRun"`
 			Stored         bool                           `json:"stored"`
+			StoreKind      string                         `json:"storeKind"`
+			Persistent     *bool                          `json:"persistent"`
 			TargetNode     string                         `json:"targetNode"`
 			Receipt        *store.Receipt                 `json:"receipt"`
 			Interpretation *sourceevidence.Interpretation `json:"interpretation"`
@@ -166,7 +172,10 @@ func TestJSONOutput(t *testing.T) {
 		}
 		if got.Format != "pqcota-source-evidence/v1" || got.DryRun != dry || got.Stored == dry ||
 			(got.Receipt == nil) != dry || got.TargetNode != "web-01" || got.Interpretation == nil ||
-			len(got.Interpretation.Items) != 2 {
+			len(got.Interpretation.Items) != 2 || got.Persistent == nil || *got.Persistent {
+			t.Fatalf("dry=%v: %+v", dry, got)
+		}
+		if wantKind := map[bool]string{true: "", false: "memory"}[dry]; got.StoreKind != wantKind {
 			t.Fatalf("dry=%v: %+v", dry, got)
 		}
 		if strings.Contains(out, "\x1b") {
@@ -191,7 +200,7 @@ func TestFailuresAreNotReportedAsSuccess(t *testing.T) {
 	if code == 0 || strings.Contains(out, "✓") || !strings.Contains(errs, "not stored: disk full") {
 		t.Fatalf("save failure: exit %d\n%s\n%s", code, out, errs)
 	}
-	code, out, errs = run(t, seOpts{input: in}, func() (store.Store, func(), string, error) {
+	code, out, errs = run(t, seOpts{input: in}, func() (store.Store, func(), storeKind, error) {
 		return nil, nil, "", errors.New("connection refused")
 	})
 	if code == 0 || out != "" || !strings.Contains(errs, "connection refused") {
@@ -229,5 +238,53 @@ func TestReadStopsAtTheLimit(t *testing.T) {
 	}
 	if _, err := readLimited(io.MultiReader(strings.NewReader(strings.Repeat("a", 1001))), 1000); err == nil {
 		t.Fatal("one byte over the limit was accepted")
+	}
+}
+
+// 영속 저장이면 JSON이 그렇게 말한다(인메모리와 구분된다).
+func TestJSONSaysWhetherPersistent(t *testing.T) {
+	st, _ := store.NewMemStoreIn("")
+	pg := func() (store.Store, func(), storeKind, error) { return st, func() {}, storePostgres, nil }
+	code, out, errs := run(t, seOpts{json: true, input: writeSample(t, sample)}, pg)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	var got struct {
+		Stored     bool   `json:"stored"`
+		StoreKind  string `json:"storeKind"`
+		Persistent bool   `json:"persistent"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || !got.Stored || got.StoreKind != "postgres" || !got.Persistent {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// 두 규칙이 정규화해 같은 자리로 묶인 위치 — 머리는 정규화한 좌표, 보고값·규칙은 위치마다 적는다(A2 대비).
+func TestGroupOfNormalizedLocationsKeepsEachReportedValue(t *testing.T) {
+	n := func(v int64) *int64 { return &v }
+	mk := func(rule, ptr string, line, col int64, sym string) sourceevidence.Location {
+		return sourceevidence.Location{
+			Rule:           sourceevidence.RuleRef{Source: "user", ID: rule, Revision: "1"},
+			SourcePointers: map[string]string{"combined": ptr},
+			Reported:       sourceevidence.ReportedLocation{Path: "src/Wrap.cs", Line: n(line), Column: n(col), Symbol: sym},
+			ColumnUnit:     "codepoint",
+			Normalized:     sourceevidence.Normalized{Path: "src/Wrap.cs", Line: n(12), Column: n(5)},
+			Kind:           sourceevidence.LocationKindNotSupplied,
+		}
+	}
+	g := sourceevidence.GroupLocations([]sourceevidence.Location{
+		mk("zero-based", "/components/0/properties/0", 11, 4, "Encrypt"),
+		mk("one-based", "/components/0/properties/2", 12, 5, ""),
+	})
+	if len(g) != 1 {
+		t.Fatalf("groups %d", len(g))
+	}
+	var b strings.Builder
+	printGroup(func(f string, a ...any) { b.WriteString(fmt.Sprintf(f, a...)) }, g[0])
+	want := "    location src/Wrap.cs:12:5 (normalized, 1-based) ×2\n" +
+		"      from /components/0/properties/0 · rule zero-based@1 · kind: not supplied · reported src/Wrap.cs:11:4 · symbol Encrypt\n" +
+		"      from /components/0/properties/2 · rule one-based@1 · kind: not supplied · reported src/Wrap.cs:12:5\n"
+	if b.String() != want {
+		t.Fatalf("got\n%s\nwant\n%s", b.String(), want)
 	}
 }

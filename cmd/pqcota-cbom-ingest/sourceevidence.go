@@ -46,11 +46,13 @@ type seOpts struct {
 	node   string
 }
 
-// parseSourceEvidence — 새 플래그가 하나도 없으면 handled=false(기존 경로). 플래그는 위치 인자 앞뒤
-// 어디에 와도 된다(설계 §5.4의 예가 뒤에 붙인다).
+// parseSourceEvidence — 옵션(`-`로 시작하고 `-` 하나가 아닌 인자)이 하나도 없으면 handled=false(기존 경로).
+// 옵션이 하나라도 있으면 여기서 처리하고, 모르는 옵션은 종료 코드 2로 멈춘다 — 기존 경로는 옵션을 모르고
+// 남는 인자를 버리므로, 철자가 틀린 플래그나 아직 없는 `--source-map`을 넘기면 스냅샷을 써 버린다.
+// 플래그는 위치 인자 앞뒤 어디에 와도 된다(설계 §5.4의 예가 뒤에 붙인다).
 func parseSourceEvidence(args []string) (o seOpts, handled bool, err error) {
 	var se bool
-	var pos []string
+	var pos, unknown []string
 	for _, a := range args {
 		switch a {
 		case "--source-evidence":
@@ -61,7 +63,8 @@ func parseSourceEvidence(args []string) (o seOpts, handled bool, err error) {
 			o.json, handled = true, true
 		default:
 			if strings.HasPrefix(a, "-") && a != "-" {
-				pos = append(pos, a) // 새 플래그가 있을 때만 아래에서 거부한다
+				unknown = append(unknown, a)
+				handled = true
 				continue
 			}
 			pos = append(pos, a)
@@ -70,15 +73,13 @@ func parseSourceEvidence(args []string) (o seOpts, handled bool, err error) {
 	if !handled {
 		return o, false, nil
 	}
+	if len(unknown) > 0 {
+		return o, true, fmt.Errorf("unknown option %s — nothing was written", strings.Join(unknown, " "))
+	}
 	// --dry-run만 주고 --source-evidence를 빠뜨리면 기존 경로가 스냅샷을 쓴다. 미리보기인 줄 알고
 	// 적재하는 일을 막으려고 멈춘다.
 	if !se {
-		return o, true, errors.New("--dry-run and --json only work with --source-evidence; without it this command writes a runtime snapshot")
-	}
-	for _, p := range pos {
-		if strings.HasPrefix(p, "-") && p != "-" {
-			return o, true, fmt.Errorf("unknown option %s", p)
-		}
+		return o, true, errors.New("--dry-run and --json only work with --source-evidence; without it this command writes a runtime snapshot — nothing was written")
 	}
 	switch len(pos) {
 	case 1:
@@ -91,21 +92,38 @@ func parseSourceEvidence(args []string) (o seOpts, handled bool, err error) {
 	return o, true, nil
 }
 
-// seStoreOpener — 저장소를 여는 자리. 시험이 바꿔 끼운다. backing은 화면에 적을 이름.
-type seStoreOpener func() (st store.Store, closeFn func(), backing string, err error)
+// storeKind — 어디에 저장했나. 인메모리는 프로세스와 함께 사라지므로 자동화가 구분할 수 있게 JSON에 낸다.
+type storeKind string
 
-func openSourceEvidenceStore() (store.Store, func(), string, error) {
+const (
+	storeMemory   storeKind = "memory"
+	storePostgres storeKind = "postgres"
+)
+
+func (k storeKind) persistent() bool { return k == storePostgres }
+
+func (k storeKind) label() string {
+	if k == storePostgres {
+		return "Postgres (persistent)"
+	}
+	return "in-memory (gone when the process exits)"
+}
+
+// seStoreOpener — 저장소를 여는 자리. 시험이 바꿔 끼운다.
+type seStoreOpener func() (st store.Store, closeFn func(), kind storeKind, err error)
+
+func openSourceEvidenceStore() (store.Store, func(), storeKind, error) {
 	dsn := os.Getenv("PQCOTA_DSN")
 	if dsn == "" {
 		m, err := store.NewMemStoreIn(org.FromEnv())
-		return m, func() {}, "in-memory (gone when the process exits)", err
+		return m, func() {}, storeMemory, err
 	}
 	// 기존 경로와 같이 인메모리로 대체하지 않는다 — 영속을 요구했는데 못 들어주면 멈춘다.
 	p, err := store.NewPgStoreIn(context.Background(), dsn, org.FromEnv())
 	if err != nil {
 		return nil, nil, "", err
 	}
-	return p, p.Close, "Postgres (persistent)", nil
+	return p, p.Close, storePostgres, nil
 }
 
 // readLimited — 상한을 넘으면 끝까지 읽지 않고 멈춘다.
@@ -137,6 +155,8 @@ type seJSON struct {
 	DryRun         bool                           `json:"dryRun"`
 	TargetNode     string                         `json:"targetNode"`
 	Stored         bool                           `json:"stored"`
+	StoreKind      storeKind                      `json:"storeKind"`  // "memory"·"postgres", 저장하지 않았으면 ""
+	Persistent     bool                           `json:"persistent"` // 프로세스가 끝난 뒤에도 남는가
 	Receipt        *store.Receipt                 `json:"receipt"`
 	Interpretation *sourceevidence.Interpretation `json:"interpretation"`
 }
@@ -155,7 +175,7 @@ func runSourceEvidence(o seOpts, stdin io.Reader, stdout, stderr io.Writer, open
 	}
 
 	var rc *store.Receipt
-	backing := ""
+	var backing storeKind
 	if !o.dryRun {
 		// 미리보기는 저장소를 열지도 않는다 — 스키마 자동 생성도 DB 쓰기다.
 		st, closeFn, b, err := open()
@@ -176,7 +196,7 @@ func runSourceEvidence(o seOpts, stdin io.Reader, stdout, stderr io.Writer, open
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(seJSON{Format: OutputFormat, DryRun: o.dryRun, TargetNode: o.node,
-			Stored: rc != nil, Receipt: rc, Interpretation: interp}); err != nil {
+			Stored: rc != nil, StoreKind: backing, Persistent: backing.persistent(), Receipt: rc, Interpretation: interp}); err != nil {
 			fmt.Fprintln(stderr, "write:", err)
 			return 1
 		}
@@ -188,7 +208,7 @@ func runSourceEvidence(o seOpts, stdin io.Reader, stdout, stderr io.Writer, open
 		return 0
 	}
 	fmt.Fprintf(stdout, "\n✓ stored in %s: receipt #%d · new input: %s · new interpretation: %s\n",
-		backing, rc.Seq, yesNo(rc.NewInput), yesNo(rc.NewInterpretation))
+		backing.label(), rc.Seq, yesNo(rc.NewInput), yesNo(rc.NewInterpretation))
 	if !rc.NewInterpretation {
 		fmt.Fprintln(stdout, "  the same input and rules were received before — only a receipt was added.")
 	}
@@ -291,49 +311,63 @@ func itemTitle(it sourceevidence.Item) string {
 	return safe(name) + "  " + safe(strings.Join(rest, " "))
 }
 
+// printGroup — 위치는 한 줄로 묶고, 위치마다 다를 수 있는 값(규칙·종류·offset·symbol·문맥·진단)은 그 위치의
+// 원본 포인터 옆에 적는다. 첫 위치의 값만 머리에 적으면 그 값이 묶인 전부에 해당하는 것처럼 읽힌다.
 func printGroup(p func(string, ...any), g sourceevidence.Group) {
 	l := g.Locations[0]
-	pos := l.Reported.Path
-	if l.Reported.Line != nil {
-		pos += ":" + strconv.FormatInt(*l.Reported.Line, 10)
+	norm := l.Normalized.Line != nil // 묶기는 정규화한 것과 보고값만 있는 것을 섞지 않는다
+	head := "reported location " + coord(l.Reported.Path, l.Reported.Line, l.Reported.Column)
+	if norm {
+		head = "location " + coord(l.Normalized.Path, l.Normalized.Line, l.Normalized.Column) + " (normalized, 1-based)"
+	} else if l.Normalized.AbsentReason != "" {
+		head += " (" + safe(l.Normalized.AbsentReason) + ")"
 	}
-	if l.Reported.Column != nil {
-		pos += ":" + strconv.FormatInt(*l.Reported.Column, 10)
-	}
-	note := ""
-	if l.Normalized.AbsentReason != "" {
-		note = " (" + l.Normalized.AbsentReason + ")"
-	}
-	times := ""
 	if len(g.Locations) > 1 {
-		times = fmt.Sprintf(" ×%d", len(g.Locations))
+		head += fmt.Sprintf(" ×%d", len(g.Locations))
 	}
-	p("    reported location %s%s%s · kind: %s · rule %s\n", safe(pos), note, times, kindLabel(l.Kind), l.Rule.String())
-	if l.Reported.Offset != nil {
-		p("      offset %d (unit and base not defined; kept as reported)\n", *l.Reported.Offset)
-	}
-	if l.Reported.Symbol != "" {
-		p("      symbol  %s\n", safe(l.Reported.Symbol))
-	}
-	if l.Reported.Context != "" {
-		p("      context %s\n", safe(l.Reported.Context))
-	}
+	p("    %s\n", head)
 	for _, x := range g.Locations {
 		keys := make([]string, 0, len(x.SourcePointers))
 		for k := range x.SourcePointers {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		for _, k := range keys {
-			p("      from %s\n", safe(x.SourcePointers[k]))
+		ptrs := make([]string, len(keys))
+		for i, k := range keys {
+			ptrs[i] = safe(x.SourcePointers[k])
 		}
+		parts := []string{"from " + strings.Join(ptrs, ", "), "rule " + x.Rule.String(), "kind: " + kindLabel(x.Kind)}
+		if norm {
+			parts = append(parts, "reported "+coord(x.Reported.Path, x.Reported.Line, x.Reported.Column))
+		}
+		if x.Reported.Offset != nil {
+			parts = append(parts, "offset "+strconv.FormatInt(*x.Reported.Offset, 10)+" (unit undefined)")
+		}
+		if x.Reported.Symbol != "" {
+			parts = append(parts, "symbol "+safe(x.Reported.Symbol))
+		}
+		if x.Reported.Context != "" {
+			parts = append(parts, "context "+safe(x.Reported.Context))
+		}
+		p("      %s\n", strings.Join(parts, " · "))
 		for _, d := range x.Diagnostics {
 			if d.Code == sourceevidence.DiagLineBaseUnknown {
-				continue // 위의 괄호가 이미 말한다
+				continue // 머리의 괄호가 이미 말한다
 			}
-			p("      ! %s %s %s\n", d.Code, safe(d.Pointer), safe(d.Detail))
+			p("        ! %s %s %s\n", d.Code, safe(d.Pointer), safe(d.Detail))
 		}
 	}
+}
+
+func coord(path string, line, col *int64) string {
+	s := safe(path)
+	if line != nil {
+		s += ":" + strconv.FormatInt(*line, 10)
+	}
+	if col != nil {
+		s += ":" + strconv.FormatInt(*col, 10)
+	}
+	return s
 }
 
 func kindLabel(k string) string {
