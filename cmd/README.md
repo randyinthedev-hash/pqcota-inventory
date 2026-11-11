@@ -36,6 +36,24 @@ pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
 
 The result of an unregistered node is refused and not stored; a **refusal entry** (node, collector, reason, content hash) is kept, in the database if one is configured.
 
+> **How the current implementation builds a node's latest snapshot.** For each node that appears in one load, it makes the
+> latest snapshot from the results in **that load only**. It does not carry over findings or edges from the node's earlier
+> snapshot. A node that does not appear in the load keeps its latest snapshot.
+>
+> So if you load only some of a node's results (for example only the JVM result), the assets and connections you did not
+> submit drop out of the latest view, and a comparison (`pqcota-inventory -diff`) can show them as `removed`. A layer that was
+> not submitted is not always shown as a gap today, so **do not read this as evidence that an asset was removed or that a
+> connection does not exist.** The earlier snapshots stay in the history and can still be read with `-snapshot`.
+>
+> To keep the latest view complete, put every result you want it to reflect for a node in the same load:
+>
+> ```
+> # the results of several nodes (OpenSSL, JVM, network) gathered in one directory and loaded at once
+> ls results/
+> pay-app-jca.jsonl  pay-app-net.json  pay-app-openssl.json  web-gw-net.json  web-gw-openssl.json ...
+> pqcota-ingest results/
+> ```
+
 ### `pqcota-declare-attribution`
 
 ```bash
@@ -101,11 +119,104 @@ If `env PQCOTA_DSN` is set it persists in Postgres, and if not it only prints an
 
 `ImportCBOM` validates the structure and the anchor (the signature gate is not wired: see the note above). What passes converges into the same history as above, through the observation lane (`detection_method=source/artifact`). Adapter: `pkg/inventory/ingest`.
 
+> **The note under `pqcota-ingest` applies here too.** An external CBOM loaded under a node that pqcota also observes at runtime
+> becomes that node's latest snapshot, with only the CBOM's findings in it. The runtime snapshots stay in the history, but the latest
+> view and the provisioning before-capture read the CBOM snapshot. A comparison that takes the latest snapshot compares against
+> the CBOM snapshot; a comparison between two earlier snapshots you name is not affected. A plan that names a
+> runtime snapshot explicitly still resolves to it. To keep a CBOM out of the runtime view altogether, load it as
+> source evidence (`--source-evidence`, below).
+
 > **Injecting from a CI pipeline**: you can pipe CBOMkit's output straight in without an intermediate file (GitHub Actions, GitLab CI and so on):
 > ```bash
 > cbomkit scan ./repo | pqcota-cbom-ingest - cmdb://payment-gw
 > ```
 > CI knows what it is building, so it pins `target-node-id` here (without an anchor it is routed to the scope decision, see [pqcota-discovery README](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/README.md)).
+
+### Source evidence: `pqcota-cbom-ingest --source-evidence`
+
+```
+pqcota-cbom-ingest <cbom.json | -> [target-node-id] --source-evidence
+                   [--preset <id>] [--source-map <file>] [--allow-unmatched-rules] [--dry-run] [--json]
+```
+
+With `--source-evidence` the CBOM is **not** turned into a snapshot. It is kept as **source evidence**: the crypto items the CBOM
+reports and the source locations it gives for them, for review. Nothing in the runtime view, the history or the provisioning
+before-capture changes. Without the flag the command behaves as described above.
+
+What is stored, in one transaction for the organization: the CBOM exactly as received, the mapping files used (below), the
+conversion result, and a receipt. Receiving the same CBOM again with the same mapping adds only a receipt. Read it back with
+[`pqcota-source-evidence`](#pqcota-source-evidence).
+
+| Option | What it does |
+|---|---|
+| `[target-node-id]` | optional. Recorded as given in the receipt; it is **not** checked against the scope master |
+| `--dry-run` | converts and prints the preview, writes nothing and does not open the database |
+| `--json` | machine-readable output, `format: "pqcota-source-evidence/v1"`, `kind: "ingest"`. It says whether the result was stored, where (`storeKind`, `persistent`) and, if refused, why (`refusals`) |
+| `--preset <id>` | applies a built-in mapping (list them with `pqcota-source-evidence --presets`) |
+| `--source-map <file>` | applies your own mapping file (at most 256 KiB) |
+| `--allow-unmatched-rules` | accepts a mapping rule that matched nothing in this CBOM; the result simply has no locations from that rule |
+
+**What it reads.** The standard CycloneDX fields of every `cryptographic-asset` component (name, asset type, OID, algorithm
+properties, `evidence.occurrences`) are always read. Other components are only counted. `properties` are kept as the tool's own
+values, never as a pqcota verdict. A location is shown as a **reported location for review**: the CBOM does not say whether it is a
+call, a declaration or a comment, so neither does pqcota. Line and column numbers are shown as reported; they are turned into
+1-based numbers only when the counting base is known. The standard `line` field does not state its base, so it is shown as
+reported.
+
+**Mappings.** Some tools put source locations in `properties` instead of `evidence.occurrences`. A mapping tells pqcota where to
+read them. Two presets come built in:
+
+| Preset | Checked against | Reads |
+|---|---|---|
+| `cdxgen-dotnet-sourcelocation@1` | cdxgen 13.7.0, .NET 8 project | `cdx:crypto:sourceLocation` (`path:line:column`, several per component) |
+| `dosai-cyclonedx-location@1` | dosai 5.0.0.0 CycloneDX output, .NET 8 project | `dosai:location` on `cryptographic-asset` components |
+
+A preset is checked only against the tool version listed. In both, lines count from 1 and the column's base and unit are
+`unknown`, so columns are shown as reported. For another tool, write a mapping file:
+
+```json
+{
+  "format": "pqcota-source-map/v1",
+  "id": "my-scanner",
+  "revision": "1",
+  "rules": [
+    {
+      "id": "source-location",
+      "componentTypes": ["cryptographic-asset"],
+      "locations": {
+        "from": "component",
+        "combined": {"property": "my:sourceLocation", "each": true, "parser": "path:line:column"},
+        "lineBase": 1,
+        "columnBase": "unknown",
+        "columnUnit": "unknown"
+      }
+    }
+  ]
+}
+```
+
+- `combined` reads one property whose value holds a whole location. The parsers are `path:line` and `path:line:column`. Numbers
+  are taken from the right, so `C:\src\a.cs:12:5` works. Without `"each": true`, several values in one component are an error.
+- Instead of `combined`, `file` with optional `line` and `column` reads separate values. Each is `{"property": "<name>"}` or
+  `{"pointer": "<JSON Pointer inside the component>"}`. Add `"array": "<pointer>"` to read one location per element of an array.
+- `lineBase` is required: `0`, `1` or `"unknown"`. A column needs `columnBase` and `columnUnit` (`byte`, `utf16`, `codepoint` or
+  `unknown`). Write `"unknown"` when you have not checked it. The value is then shown as reported, not converted.
+- Unknown keys and other `format` versions are refused. Change `revision` whenever you change the file.
+
+**When it refuses.** A mapping you name must convert without errors. Two values where one was expected, a value that does not fit
+the parser, a missing field, or an invalid line or column all mean **nothing is stored** (exit code 1, the preview also exits 1). A
+rule that matched no component is refused too, unless you pass `--allow-unmatched-rules`. A malformed mapping file or an unknown
+preset stops the command before the CBOM is converted (exit code 2). Options it does not know also exit with 2, so a mistyped flag never
+falls back to writing a snapshot.
+
+```bash
+# look first, then store
+pqcota-cbom-ingest cbom.json --source-evidence --preset cdxgen-dotnet-sourcelocation --dry-run
+pqcota-cbom-ingest cbom.json web-01 --source-evidence --preset cdxgen-dotnet-sourcelocation
+```
+
+`env PQCOTA_DSN` stores it in Postgres. Without it the result is kept in memory and is gone when the command ends; the output says
+which.
 
 ## ③ Query: read what has accumulated, read-only
 
@@ -142,6 +253,31 @@ Run with no arguments it prints **the latest snapshot of every node + a grade ta
 The **direction convention of `-diff`: first argument = past, second = latest** (`added` = present only in the second, `removed` = present only in the first). Giving them in reverse time order makes the direction read backwards, so **it warns if they are reversed.** The finding id is a hash of (node, name, runtime, fork, and for OpenSSL the library path when the input has it), so **even when the version changes it is caught as a `changed` of the same asset**, and two installations with the same file name on one node stay two assets. If the rulesets differ, it warns that a difference in derived values may be a recomputation result.
 
 **Snapshots accumulate only at change points.** Observing the same state again does not create a new snapshot and leaves only an **observation record** (lightweight), so the `obs` and `observed` columns of `-history` show "how many times and until when that state was re-confirmed". So the heavy storage grows **only as many times as there are changes**, yet the evidence that "it was scanned every time" is kept.
+
+### `pqcota-source-evidence`
+
+```
+pqcota-source-evidence [--limit N] [--json]
+pqcota-source-evidence --id <interpretation-id> [--json]
+pqcota-source-evidence --input <sha256> --out <file>
+pqcota-source-evidence --map <sha256> --out <file>
+pqcota-source-evidence --presets [--json]
+```
+
+Reads the source evidence stored by `pqcota-cbom-ingest --source-evidence`. Read-only: it does not create tables, so an account
+that can only `SELECT` is enough. `env PQCOTA_DSN` is required, except for `--presets`.
+
+| Flag | What it does |
+|---|---|
+| (none) | lists stored conversions, newest first: CycloneDX version, the tool the CBOM names, the mapping used, item and location counts, how often it was received and the target nodes given (user-specified) |
+| `--id <id>` | one conversion: its receipts, then every item and its reported locations. The same location reported more than once is shown on one line, and every original pointer is listed under it |
+| `--input <sha256> --out <file>` | writes the CBOM exactly as received to a new file. It checks the hash first, does not overwrite an existing file, and never prints the bytes to the terminal |
+| `--map <sha256> --out <file>` | the same for a mapping file used in a conversion |
+| `--presets` | the built-in mappings and what they were checked against |
+| `--json` | `format: "pqcota-source-evidence/v1"`, `kind: "interpretations"`, `"interpretation"` or `"presets"`. The detail keeps every location separate and gives the on-screen grouping as `displayGroups` |
+
+Paths, symbols and context come from the CBOM. They are shown as text with control characters escaped, and nothing is opened or run.
+Another organization's evidence (`PQCOTA_ORG`) is not visible.
 
 ## ④ Retention policy: truncate old change points
 
@@ -194,5 +330,6 @@ pqcota-declare [--out <dir>] <declaration.csv>
 ## When to use what
 - To **collate the retrieved result files once and look at them on the spot** → **`pqcota-discover-view`** (no store needed, volatile).
 - To **query centrally the cumulative inventory that several nodes built up over time** (including endpoints, profiles and app labels) → **`pqcota-inventory`** (Postgres).
+- To **keep an external CBOM as source locations for review, apart from what runs** → **`pqcota-cbom-ingest --source-evidence`**, read back with **`pqcota-source-evidence`**.
 
 > The logic lives in `pkg/inventory/` (the loading adapter `ingest`, view rendering, `RenderStore`, the machine metadata `MetaStore`, the hosts parser), including normalization and the history store, and these commands are thin entry points that assemble it.

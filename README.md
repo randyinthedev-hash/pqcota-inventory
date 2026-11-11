@@ -47,6 +47,15 @@ pqcota-cbom-ingest cbom.json cmdb://payment-gw     # a CBOM scanned by an extern
 pqcota-declare cmdb.csv --out ./declared && pqcota-ingest ./declared   # a CMDB declaration
 ```
 
+To keep a CBOM apart from the runtime history instead, as source locations for review, load it as source evidence and read it
+back with `pqcota-source-evidence`:
+
+```bash
+pqcota-cbom-ingest cbom.json --source-evidence --dry-run   # preview, writes nothing
+pqcota-cbom-ingest cbom.json --source-evidence             # store; no snapshot is created
+pqcota-source-evidence                                     # list what was stored
+```
+
 To just collate files without a datastore, use `pqcota-discover-view ./results`. Per-command arguments → [cmd/README](cmd/README.md).
 
 **If several organizations share one datastore** — every command takes the organization from
@@ -82,7 +91,7 @@ A result carries only **how it was seen** (`detection_method`). **Strength (`evi
 | Path | What |
 |---|---|
 | `pkg/inventory/` | the library: `history` (append-only store, in-memory and Postgres), `normalize` (raw capture to derived findings), `ingest`, `resultio`, `declaration`, and the views |
-| `cmd/` | the commands: `pqcota-ingest`, `pqcota-inventory`, `pqcota-discover-view`, `pqcota-cbom-ingest`, `pqcota-declare`, `pqcota-declare-attribution`, `pqcota-profile`, `pqcota-prune` |
+| `cmd/` | the commands: `pqcota-ingest`, `pqcota-inventory`, `pqcota-discover-view`, `pqcota-cbom-ingest`, `pqcota-source-evidence`, `pqcota-declare`, `pqcota-declare-attribution`, `pqcota-profile`, `pqcota-prune` |
 | `examples/` | runnable examples (`inventory/`: views, declared attribution, CBOM intake) and the shared sample results in `examples/data/` that the discovery examples read too |
 
 ## Depends on

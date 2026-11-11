@@ -47,6 +47,14 @@ pqcota-cbom-ingest cbom.json cmdb://payment-gw     # a CBOM scanned by an extern
 pqcota-declare cmdb.csv --out ./declared && pqcota-ingest ./declared   # a CMDB declaration
 ```
 
+CBOM을 런타임 이력과 떼어 검토할 소스 위치로 두려면, 소스 근거로 적재하고 `pqcota-source-evidence`로 읽습니다.
+
+```bash
+pqcota-cbom-ingest cbom.json --source-evidence --dry-run   # preview, writes nothing
+pqcota-cbom-ingest cbom.json --source-evidence             # store; no snapshot is created
+pqcota-source-evidence                                     # list what was stored
+```
+
 데이터 저장소 없이 파일만 대조하려면 `pqcota-discover-view ./results`를 쓰세요. 명령별 인자는 [cmd/README](cmd/README.ko.md)에 있습니다.
 
 **여러 조직이 하나의 데이터 저장소를 쓴다면** 모든 명령이 조직을 `PQCOTA_ORG`에서 받습니다. 지정하지 않으면 저장소는 `default`에 묶이고, `PQCOTA_REQUIRE_ORG=1`이면 조직 없이는 저장소를 열지 않습니다. 조직마다 자기 `node_id` 공간을 가지므로 `web-01`이 둘이어도 서로 덮어쓰지 않습니다.
@@ -76,7 +84,7 @@ export PQCOTA_ORG=acme PQCOTA_REQUIRE_ORG=1 PQCOTA_REQUIRE_SIGNATURE=1
 | 경로 | 내용 |
 |---|---|
 | `pkg/inventory/` | 라이브러리: `history`(추가만 가능한 저장소, 메모리와 Postgres), `normalize`(원시 캡처에서 파생 발견 항목으로), `ingest`, `resultio`, `declaration`, 그리고 뷰 |
-| `cmd/` | 명령: `pqcota-ingest`, `pqcota-inventory`, `pqcota-discover-view`, `pqcota-cbom-ingest`, `pqcota-declare`, `pqcota-declare-attribution`, `pqcota-profile`, `pqcota-prune` |
+| `cmd/` | 명령: `pqcota-ingest`, `pqcota-inventory`, `pqcota-discover-view`, `pqcota-cbom-ingest`, `pqcota-source-evidence`, `pqcota-declare`, `pqcota-declare-attribution`, `pqcota-profile`, `pqcota-prune` |
 | `examples/` | 실행해 볼 수 있는 예제(`inventory/`: 뷰, 선언한 귀속, CBOM 수용)와, 관측 예제도 읽는 공유 샘플 결과 `examples/data/` |
 
 ## 의존하는 것
