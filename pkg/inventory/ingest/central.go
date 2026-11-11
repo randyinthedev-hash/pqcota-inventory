@@ -230,11 +230,11 @@ func (o IngestOptions) record(rep *IngestReport, res *discoveryv1.CollectionResu
 // ImportCBOM(서명검증→구조검증→스코프바인딩, 위임 수신 설계 §1)을 통과한 것만 CollectionResult로 감싸
 // Normalize→store 한다. pqcota collector 경로(IngestResults)와 같은 뒷단을 공유 — 입력 형식만 다름.
 func IngestCBOM(raw []byte, targetNodeID string, verifySig func([]byte) bool, snapshotPrefix, rulesetVersion string, store history.Store) (Disposition, error) {
-	disp, env, _ := ImportCBOM(raw, targetNodeID, verifySig)
+	disp, env, _, spec := importCBOM(raw, targetNodeID, verifySig)
 	if disp != Accepted {
 		return disp, nil // Rejected(검증실패)·NeedsScopeBinding(앵커없음)은 저장하지 않는다.
 	}
-	res := cbomResult(raw, env)
+	res := cbomResult(raw, env, spec)
 	snapID := snapshotPrefix + ":" + targetNodeID
 	if _, err := normalize.Normalize([]*discoveryv1.CollectionResult{res}, snapID, targetNodeID, rulesetVersion, store, nil); err != nil {
 		return disp, err
@@ -244,16 +244,16 @@ func IngestCBOM(raw []byte, targetNodeID string, verifySig func([]byte) bool, sn
 
 // cbomResult — 검증을 통과한 CBOM을 정규화 입력으로 감싼다.
 //
-// 판은 본문이 선언한 값이다(ValidateCBOM이 1.6·1.7만 통과시킨다). 예전에는 1.7 입력도 "1.6"으로 적었다.
+// 판은 검증이 본문에서 읽은 값이다(ValidateCBOM이 1.6·1.7만 통과시킨다). 예전에는 1.7 입력도 "1.6"으로 적었다.
 //
 // RawCapture에 받은 바이트를 그대로 싣지만, **스냅샷 이력은 이것을 보관하지 않는다.** 정규화가 남기는 것은
 // finding·엣지·완전성뿐이다. 받은 CBOM 원문을 보관하려면 소스 근거 경로(pqcota-cbom-ingest --source-evidence,
 // sourceevidence/store)를 쓴다.
-func cbomResult(raw []byte, env *commonv1.Envelope) *discoveryv1.CollectionResult {
+func cbomResult(raw []byte, env *commonv1.Envelope, specVersion string) *discoveryv1.CollectionResult {
 	return &discoveryv1.CollectionResult{
 		Envelope:             env, // ARTIFACT Envelope(SV-2)
 		CbomCyclonedx:        raw,
-		CyclonedxSpecVersion: ValidateCBOM(raw).SpecVersion,
+		CyclonedxSpecVersion: specVersion,
 		RawCapture:           raw,
 		RawFormat:            "external-cbom/cyclonedx",
 	}

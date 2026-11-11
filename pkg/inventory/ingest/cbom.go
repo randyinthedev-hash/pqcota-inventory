@@ -54,18 +54,25 @@ const (
 //
 // evidence_strength는 코어 강화 단계가 detection_method에서 파생한다(Envelope엔 넣지 않음, §1.2).
 func ImportCBOM(raw []byte, targetNodeID string, verifySig func([]byte) bool) (Disposition, *commonv1.Envelope, string) {
+	disp, env, reason, _ := importCBOM(raw, targetNodeID, verifySig)
+	return disp, env, reason
+}
+
+// importCBOM — ImportCBOM과 같고, 검증에서 읽은 본문의 specVersion도 돌려준다(본문을 다시 읽지 않으려고).
+func importCBOM(raw []byte, targetNodeID string, verifySig func([]byte) bool) (Disposition, *commonv1.Envelope, string, string) {
 	if verifySig != nil && !verifySig(raw) {
-		return Rejected, nil, "signature mismatch"
+		return Rejected, nil, "signature mismatch", ""
 	}
-	if v := ValidateCBOM(raw); !v.OK {
-		return Rejected, nil, v.Reason
+	v := ValidateCBOM(raw)
+	if !v.OK {
+		return Rejected, nil, v.Reason, ""
 	}
 	if targetNodeID == "" {
-		return NeedsScopeBinding, nil, "no target_node_id binding"
+		return NeedsScopeBinding, nil, "no target_node_id binding", ""
 	}
 	env := &commonv1.Envelope{
 		DetectionMethod: commonv1.DetectionMethod_DETECTION_METHOD_ARTIFACT,
 		TargetNodeId:    targetNodeID,
 	}
-	return Accepted, env, ""
+	return Accepted, env, "", v.SpecVersion
 }
