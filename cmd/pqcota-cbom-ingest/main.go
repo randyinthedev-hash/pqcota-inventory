@@ -13,6 +13,8 @@
 //	<cbom.json | ->   : CycloneDX CBOM 파일(또는 stdin '-')
 //	<target-node-id>  : 이 CBOM을 달아 둘 스코프 노드 ID(§1.4 앵커). 없으면 스코프 판정 요청(SD-5).
 //	env PQCOTA_DSN     : (선택) 있으면 Postgres 영속화, 없으면 인메모리(요약만).
+//
+// `--source-evidence`를 주면 스냅샷 대신 소스 근거로 저장한다(sourceevidence.go).
 package main
 
 import (
@@ -29,6 +31,14 @@ import (
 )
 
 func main() {
+	// 소스 근거 경로(sourceevidence.go). 새 플래그가 하나도 없으면 아래 기존 경로가 그대로 돈다.
+	if o, handled, err := parseSourceEvidence(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		os.Exit(runSourceEvidence(o, os.Stdin, os.Stdout, os.Stderr, openSourceEvidenceStore))
+	}
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: pqcota-cbom-ingest <cbom.json | -> <target-node-id>")
 		os.Exit(2)
