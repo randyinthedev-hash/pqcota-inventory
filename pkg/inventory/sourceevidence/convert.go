@@ -584,6 +584,10 @@ func interpretationID(in *Interpretation) string {
 	return digest("interpretation", in.SchemaVersion, in.ConverterVersion, in.InputSHA256, in.Rules, in.ExcludedRuleIDs)
 }
 
+// IDMatches — ID가 입력 해시·규칙·제외 목록·판에서 다시 계산한 값과 같은가. 저장소가 받기 전에 본다 —
+// 이름표와 내용이 어긋난 결과를 저장하면 같은 ID로 다른 해석을 가리키게 된다.
+func (in *Interpretation) IDMatches() bool { return in.ID == interpretationID(in) }
+
 // locationID — 근거 항목 + 규칙 식별 + 원본 포인터. 두 규칙이 같은 포인터를 읽어도 위치는 따로다(계약 D7).
 // map은 encoding/json이 키 순서로 직렬화하므로 결정론적이다.
 func locationID(itemID string, r RuleRef, ptrs map[string]string) string {
