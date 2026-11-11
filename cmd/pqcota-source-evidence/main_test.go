@@ -253,3 +253,45 @@ func (t tampered) InputRaw(sha string) ([]byte, error) {
 	b, err := t.Store.InputRaw(sha)
 	return append(b, ' '), err
 }
+
+// 정확히 100건은 잘린 것이 아니다. 101건째부터 넘쳤다고 적고, 대상 노드가 최근 100건 기준임을 밝힌다.
+func TestReceiptsTruncation(t *testing.T) {
+	st, _ := store.NewMemStoreIn("acme")
+	var a *sourceevidence.Interpretation
+	for i := 0; i < 100; i++ {
+		a = save(t, st, sampleA, "web-01")
+	}
+	type detailJSON struct {
+		Receipts          []store.Receipt `json:"receipts"`
+		ReceiptsTruncated *bool           `json:"receiptsTruncated"`
+	}
+	check := func(wantMore bool, wantList string) {
+		t.Helper()
+		_, out, _ := runArgs(t, st)
+		if !strings.Contains(out, wantList) {
+			t.Errorf("list lacks %q\n%s", wantList, out)
+		}
+		_, out, _ = runArgs(t, st, "--json")
+		var l struct {
+			Interpretations []struct {
+				ReceiptCount      int  `json:"receiptCount"`
+				ReceiptsTruncated bool `json:"receiptsTruncated"`
+			}
+		}
+		if err := json.Unmarshal([]byte(out), &l); err != nil || l.Interpretations[0].ReceiptCount != 100 || l.Interpretations[0].ReceiptsTruncated != wantMore {
+			t.Errorf("list json: %+v %v", l, err)
+		}
+		_, out, _ = runArgs(t, st, "--id", a.ID, "--json")
+		var d detailJSON
+		if err := json.Unmarshal([]byte(out), &d); err != nil || len(d.Receipts) != 100 || d.ReceiptsTruncated == nil || *d.ReceiptsTruncated != wantMore {
+			t.Errorf("detail json: %d receipts, truncated %v, %v", len(d.Receipts), d.ReceiptsTruncated, err)
+		}
+		_, out, _ = runArgs(t, st, "--id", a.ID)
+		if got := strings.Contains(out, "older receipts not shown"); got != wantMore {
+			t.Errorf("detail says older receipts not shown = %v, want %v", got, wantMore)
+		}
+	}
+	check(false, "received 100 times · target nodes (user-specified): web-01")
+	save(t, st, sampleA, "web-02")
+	check(true, "received more than 100 times · target nodes in the latest 100 receipts (user-specified): web-02, web-01")
+}

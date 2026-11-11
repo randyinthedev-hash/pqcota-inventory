@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
+	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/sourceevidence"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/sourceevidence/store"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/sourceevidence/view"
@@ -81,7 +82,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "(the in-memory store is not shared across processes)")
 		os.Exit(2)
 	}
-	st, err := store.NewPgStoreIn(context.Background(), dsn, org.FromEnv())
+	// 조회는 스키마를 만들지 않는다 — 있는지만 본다.
+	st, err := store.OpenPgStoreIn(context.Background(), dsn, org.FromEnv())
+	if errors.Is(err, history.ErrSchemaMissing) {
+		fmt.Fprintln(os.Stderr, "no source evidence tables in this database:", err)
+		fmt.Fprintln(os.Stderr, "(nothing was stored here with pqcota-cbom-ingest --source-evidence yet, or PQCOTA_DSN points at another database; this command does not create them)")
+		os.Exit(1)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "connecting to Postgres:", err)
 		os.Exit(1)
@@ -111,13 +118,28 @@ func run(o opts, st store.Store, organization string, stdout, stderr io.Writer) 
 // listEntry — 목록 한 줄. Summary에 수신 요약을 더한다.
 type listEntry struct {
 	store.Summary
-	ReceiptCount     int      `json:"receiptCount"`
-	ReceiptsTruncate bool     `json:"receiptsTruncated"` // 수신 기록이 상한보다 많아 다 세지 않았다
-	TargetNodes      []string `json:"targetNodes"`       // 사용자가 준 이름. 빈 값은 「지정하지 않음」
+	ReceiptCount      int      `json:"receiptCount"`      // 본 수신 기록 수(넘쳤으면 receiptScan)
+	ReceiptsTruncated bool     `json:"receiptsTruncated"` // 그보다 더 있다
+	TargetNodes       []string `json:"targetNodes"`       // 본 수신 기록의 사용자 지정 이름. 빈 값은 「지정하지 않음」
 }
 
-// receiptScan — 목록에서 한 결과당 보는 수신 기록 수.
+// receiptScan — 한 결과당 보는 수신 기록 수. 하나 더 읽어 넘쳤는지 안다.
 const receiptScan = 100
+
+// recentReceipts — 최근 receiptScan건과, 그보다 더 있는지.
+func recentReceipts(st store.Store, id string) ([]store.Receipt, bool, error) {
+	rs, err := st.ReceiptsOf(id, receiptScan+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading receipts: %w", err)
+	}
+	if rs == nil {
+		rs = []store.Receipt{}
+	}
+	if len(rs) > receiptScan {
+		return rs[:receiptScan], true, nil
+	}
+	return rs, false, nil
+}
 
 func list(st store.Store, o opts, organization string, w io.Writer) error {
 	sums, err := st.Interpretations(o.limit)
@@ -126,11 +148,11 @@ func list(st store.Store, o opts, organization string, w io.Writer) error {
 	}
 	entries := make([]listEntry, 0, len(sums))
 	for _, s := range sums {
-		rs, err := st.ReceiptsOf(s.ID, receiptScan)
+		rs, more, err := recentReceipts(st, s.ID)
 		if err != nil {
-			return fmt.Errorf("reading receipts: %w", err)
+			return err
 		}
-		e := listEntry{Summary: s, ReceiptCount: len(rs), ReceiptsTruncate: len(rs) == receiptScan, TargetNodes: []string{}}
+		e := listEntry{Summary: s, ReceiptCount: len(rs), ReceiptsTruncated: more, TargetNodes: []string{}}
 		seen := map[string]bool{}
 		for _, r := range rs {
 			if !seen[r.NodeID] {
@@ -164,15 +186,16 @@ func list(st store.Store, o opts, organization string, w io.Writer) error {
 		fmt.Fprintf(w, "    input sha256 %s\n", e.InputSHA256)
 		fmt.Fprintf(w, "    crypto components %d · with a location %d · locations %d · diagnostics %d\n",
 			c.Components, c.ItemsWithLocation, c.Locations, diags)
-		n := fmt.Sprint(e.ReceiptCount)
-		if e.ReceiptsTruncate {
-			n += "+"
+		if e.ReceiptsTruncated {
+			fmt.Fprintf(w, "    received more than %d times · target nodes in the latest %d receipts (user-specified): %s\n",
+				receiptScan, receiptScan, nodeList(e.TargetNodes))
+		} else {
+			times := "times"
+			if e.ReceiptCount == 1 {
+				times = "time"
+			}
+			fmt.Fprintf(w, "    received %d %s · target nodes (user-specified): %s\n", e.ReceiptCount, times, nodeList(e.TargetNodes))
 		}
-		times := "times"
-		if n == "1" {
-			times = "time"
-		}
-		fmt.Fprintf(w, "    received %s %s · target nodes (user-specified): %s\n", n, times, nodeList(e.TargetNodes))
 	}
 	if o.limit <= 0 && len(entries) == 100 || o.limit > 0 && len(entries) == o.limit {
 		fmt.Fprintf(w, "\nshowing %d — use --limit for more.\n", len(entries))
@@ -217,12 +240,9 @@ func detail(st store.Store, o opts, organization string, w io.Writer) error {
 	if in == nil {
 		return fmt.Errorf("no interpretation %s in organization %s", view.Safe(o.id), view.Safe(organization))
 	}
-	rs, err := st.ReceiptsOf(in.ID, 0)
+	rs, more, err := recentReceipts(st, in.ID)
 	if err != nil {
-		return fmt.Errorf("reading receipts: %w", err)
-	}
-	if rs == nil {
-		rs = []store.Receipt{}
+		return err
 	}
 	if o.json {
 		groups := make([]itemGroups, 0, len(in.Items))
@@ -239,7 +259,7 @@ func detail(st store.Store, o opts, organization string, w io.Writer) error {
 		}
 		return writeJSON(w, map[string]any{
 			"format": OutputFormat, "kind": "interpretation", "organization": organization,
-			"interpretation": in, "receipts": rs, "displayGroups": groups,
+			"interpretation": in, "receipts": rs, "receiptsTruncated": more, "displayGroups": groups,
 		})
 	}
 
@@ -259,8 +279,8 @@ func detail(st store.Store, o opts, organization string, w io.Writer) error {
 		}
 		fmt.Fprintf(w, "    #%d  %s  target node %s · %s\n", r.Seq, r.ReceivedAt.Format("2006-01-02 15:04:05Z"), node, what)
 	}
-	if len(rs) == 100 {
-		fmt.Fprintln(w, "    … older receipts not shown")
+	if more {
+		fmt.Fprintf(w, "    … older receipts not shown (only the latest %d)\n", receiptScan)
 	}
 	fmt.Fprintln(w)
 	view.Interpretation(w, in, -1)

@@ -10,10 +10,13 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/sourceevidence"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/sourceevidence/store"
 )
@@ -318,4 +321,60 @@ func TestPgStore(t *testing.T) {
 		t.Cleanup(s.Close)
 		return s
 	})
+}
+
+// TestPgOpenDoesNotCreateSchema — 조회용 연결(OpenPgStoreIn)은 빈 DB에 테이블을 만들지 않는다.
+// 빈 스키마를 search_path로 가리켜 「빈 DB」를 만든다. PQCOTA_TEST_DSN이 있을 때만 돈다.
+func TestPgOpenDoesNotCreateSchema(t *testing.T) {
+	dsn := os.Getenv("PQCOTA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("PQCOTA_TEST_DSN is not set — skipping the Postgres integration test")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := "pqcota_ro_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE") })
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	scoped := dsn + sep + "search_path=" + schema
+
+	tablesIn := func() int {
+		var n int
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_tables WHERE schemaname=$1`, schema).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if _, err := store.OpenPgStoreIn(ctx, scoped, "acme"); !errors.Is(err, history.ErrSchemaMissing) {
+		t.Fatalf("want ErrSchemaMissing, got %v", err)
+	}
+	if n := tablesIn(); n != 0 {
+		t.Fatalf("the query path created %d tables", n)
+	}
+	// 적재 쪽이 만든 뒤에는 열린다.
+	w, err := store.NewPgStoreIn(ctx, scoped, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	if n := tablesIn(); n != 3 {
+		t.Fatalf("ingest path created %d tables, want 3", n)
+	}
+	r, err := store.OpenPgStoreIn(ctx, scoped, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if l, err := r.Interpretations(0); err != nil || len(l) != 0 {
+		t.Fatalf("%v %v", l, err)
+	}
 }

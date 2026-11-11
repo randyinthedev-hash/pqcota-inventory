@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -87,19 +88,52 @@ func NewPgStoreIn(ctx context.Context, dsn, organization string) (*PgStore, erro
 	return &PgStore{pool: pool, org: o}, nil
 }
 
+// OpenPgStoreIn — 조회용으로 연다. DDL을 돌리지 않고 테이블이 있는지만 본다(PQCOTA_AUTO_DDL과 무관).
+// 조회가 빈 DB에 테이블을 만들면 안 되고, 읽기 권한만 있는 계정으로도 열려야 한다.
+// 테이블이 없으면 history.ErrSchemaMissing.
+func OpenPgStoreIn(ctx context.Context, dsn, organization string) (*PgStore, error) {
+	o, err := org.Resolve(organization)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSchema(ctx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return &PgStore{pool: pool, org: o}, nil
+}
+
+// tables — 소스 근거 테이블 전부. 하나라도 없으면 스키마가 없는 것으로 본다.
+var tables = []string{"pqcota_source_inputs", "pqcota_source_interpretations", "pqcota_source_receipts"}
+
+func checkSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	var missing []string
+	for _, t := range tables {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, t).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			missing = append(missing, t)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: %s", history.ErrSchemaMissing, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 func ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if os.Getenv(history.AutoDDLEnv) != "0" {
 		_, err := pool.Exec(ctx, schemaSQL)
 		return err
 	}
-	var exists bool
-	if err := pool.QueryRow(ctx,
-		`SELECT to_regclass('pqcota_source_receipts') IS NOT NULL`).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%w: source evidence tables — %s=0 turned automatic creation off, apply the schema first",
-			history.ErrSchemaMissing, history.AutoDDLEnv)
+	if err := checkSchema(ctx, pool); err != nil {
+		return fmt.Errorf("%w — %s=0 turned automatic creation off, apply the schema first", err, history.AutoDDLEnv)
 	}
 	return nil
 }
