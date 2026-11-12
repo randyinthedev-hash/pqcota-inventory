@@ -64,6 +64,9 @@ func detailOf(f *discoveryv1.Finding) string {
 		if insts := f.GetJca().GetInstances(); len(insts) > 0 {
 			detail += "  " + instancesDetail(insts)
 		}
+		if s := f.GetJca().GetObservationScope(); s != "" {
+			detail += "  scope=" + s
+		}
 	case f.GetCng() != nil:
 		// JCA와 같은 모양. 알고리즘 개수를 함께 내는 이유는 CNG의 provider 이름이 전부
 		// Microsoft라 개수만으로는 노드가 갈리지 않기 때문이다(실측: 9개가 전부 같은 벤더).

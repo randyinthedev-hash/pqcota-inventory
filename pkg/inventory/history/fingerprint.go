@@ -194,7 +194,7 @@ func edgeIdentityV1(e *discoveryv1.ObservedEdge) string {
 // variant_key 순으로 다시 정렬해 넣는다(저장 순서에 흔들리지 않게). 변형의 JVM 수와 모드별 수도 넣는다:
 // 그것만 바뀌어도 관측이 달라진 것이라 지문이 달라져야 한다. finding id는 그대로다(id에는 변형이 없다).
 func jcaVariantsLine(j *discoveryv1.JcaAxes) string {
-	if j.GetAppKeyKind() == "" && len(j.GetInstances()) == 0 {
+	if j.GetAppKeyKind() == "" && len(j.GetInstances()) == 0 && j.GetObservationScope() == "" {
 		return ""
 	}
 	type modeCount struct {
@@ -227,8 +227,9 @@ func jcaVariantsLine(j *discoveryv1.JcaAxes) string {
 	}
 	sort.Slice(is, func(a, b int) bool { return is[a].VariantKey < is[b].VariantKey })
 	b, _ := json.Marshal(struct {
-		AppKeyKind string `json:"app_key_kind"`
-		Instances  []inst `json:"instances"`
-	}{j.GetAppKeyKind(), is})
+		AppKeyKind       string `json:"app_key_kind"`
+		ObservationScope string `json:"observation_scope"`
+		Instances        []inst `json:"instances"`
+	}{j.GetAppKeyKind(), j.GetObservationScope(), is})
 	return string(b)
 }

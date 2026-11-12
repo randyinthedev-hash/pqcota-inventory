@@ -73,6 +73,7 @@ func DeriveFindings(res *discoveryv1.CollectionResult, snapshotID, rulesetVersio
 				ProviderSet:      providerSet,
 				RegistrationMode: parseRegistrationMode(props["pqcota:jca.registration_mode"]),
 				AppKeyKind:       props["pqcota:jca.app_key_kind"],
+				ObservationScope: props["pqcota:jca.observation_scope"],
 			}
 			f.RuntimeAxes = &discoveryv1.Finding_Jca{Jca: axes}
 			if raw := props["pqcota:jca.instances"]; raw != "" {
