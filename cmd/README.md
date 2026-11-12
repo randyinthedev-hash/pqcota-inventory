@@ -163,16 +163,26 @@ call, a declaration or a comment, so neither does pqcota. Line and column number
 1-based numbers only when the counting base is known. The standard `line` field does not state its base, so it is shown as
 reported.
 
-**Checked with a real tool output.** The standard fields have been checked against one tool's actual output:
+**Checked with real tool output.** The standard fields have been checked against the actual output of these tools:
 
 | Tool | Input | What pqcota read | Through |
 |---|---|---|---|
 | CBOMkit (`cbomkit-action` v2.3.0) | a Java 21 example written for the check; CycloneDX 1.6 | `evidence.occurrences.location` and `line`, without a preset | pqcota v0.12.0: the location chosen in a plan stayed the same reference through approval and into the generation record, with and without a guide |
+| CryptoScan 1.5.0 | a C example written for the check (OpenSSL 3 EVP); CycloneDX 1.6 | `evidence.occurrences.location` and `line` (the tool's `symbol` is kept), without a preset | pqcota v0.12.0: the same, without a guide (no guide in the catalog fits this code) |
+
+CBOMkit, Java example:
 
 - The CBOM held 14 locations. Six calls had been marked in the example as expected locations, and all six were reported at exactly those lines.
 - The paths and lines are kept as the tool reported them. The paths start with the directory the source was mounted at for the tool (`ws/`), and the counting base of the line is not stated, so it is shown as unknown.
 - **Limits seen in this run:** a key generator whose algorithm name was passed in a variable was not reported, and a 256-bit AES-GCM key was reported as 128 bits. **Seen in an earlier run** of the same version on other code (2026-11-10): calls to the Bouncy Castle lightweight API (`MLKEMGenerator` and the like) were not reported.
-- This is what one tool version reported for one example. It does not describe the tool's detection range.
+
+CryptoScan, C example:
+
+- The CBOM held 3 locations. Two of the expected locations were reported at exactly their lines: the two key-generation calls, at the algorithm name strings `"RSA"` and `"P-256"`.
+- **Limits seen in this run:** the OpenSSL EVP calls (AES-GCM encryption, RSA-OAEP key wrapping, ECDSA signing) were not reported, and an `#include <openssl/rsa.h>` line was reported as a location. The same was seen on 2026-11-10 with the same version and input.
+- Only C was checked. C++ was not.
+
+Each row is what one tool version reported for one example. It does not describe the tool's detection range.
 
 **Mappings.** Some tools put source locations in `properties` instead of `evidence.occurrences`. A mapping tells pqcota where to
 read them. Two presets come built in:
