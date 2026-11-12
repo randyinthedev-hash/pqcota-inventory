@@ -14,6 +14,7 @@ import (
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/posture"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/declaration"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
+	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/normalize"
 )
 
 // Render — 읽기전용 인벤토리 뷰. 갭은 "부재"가 아니라 "원리상 관측하지 못함"으로 명시(§2.6).
@@ -265,10 +266,84 @@ func RenderDiff(a, b *history.Snapshot) string {
 	if la, lb := len(a.Edges), len(b.Edges); la != lb {
 		fmt.Fprintf(&sb, "\nobserved edges: %d → %d\n", la, lb)
 	}
+	writeEdgeDiff(&sb, a.Edges, b.Edges)
 	if ga, gb := gapOf(a), gapOf(b); ga != gb {
 		fmt.Fprintf(&sb, "gap (unobservable by design): %s → %s\n", ga, gb)
 	}
 	return sb.String()
+}
+
+// writeEdgeDiff — 엣지를 엣지 id(normalize.EdgeIdentity)로 맞대어 사라진 것·새로 생긴 것·횟수만 바뀐 것을
+// 적는다. 같으면 아무것도 적지 않는다.
+//
+// 엣지 id에는 앱 키가 들어간다. 그래서 수집기가 앱을 짚는 방식이 바뀌면(v0.13.0: 같은 목적지에 붙은 서비스가
+// 엣지 하나로 합쳐지던 것이 서비스마다 갈린다) 통신이 그대로여도 「사라짐·추가」로 나온다. 스냅샷에는
+// 수집기 판이 없어 여기서 그것을 알아챌 수 없다 — 릴리스 노트가 알린다.
+func writeEdgeDiff(sb *strings.Builder, a, b []*discoveryv1.ObservedEdge) {
+	am, bm := indexEdges(a), indexEdges(b)
+	var added, removed, changed []string
+	for _, id := range sortedEdgeKeys(bm) {
+		e := bm[id]
+		old, ok := am[id]
+		switch {
+		case !ok:
+			added = append(added, fmt.Sprintf("  + %s  ×%d", edgeLine(e.edge), e.count))
+		case old.count != e.count:
+			changed = append(changed, fmt.Sprintf("  ~ %s  ×%d → ×%d", edgeLine(e.edge), old.count, e.count))
+		}
+	}
+	for _, id := range sortedEdgeKeys(am) {
+		if _, ok := bm[id]; !ok {
+			e := am[id]
+			removed = append(removed, fmt.Sprintf("  - %s  ×%d", edgeLine(e.edge), e.count))
+		}
+	}
+	if len(added)+len(removed)+len(changed) == 0 {
+		return
+	}
+	sb.WriteByte('\n')
+	section(sb, "edges removed", removed)
+	section(sb, "edges added", added)
+	section(sb, "edges changed", changed)
+}
+
+// edgeLine — diff의 엣지 한 줄. 앱을 못 짚은 엣지는 「앱 없음」으로 읽히지 않게 적는다.
+func edgeLine(e *discoveryv1.ObservedEdge) string {
+	app := appMark(e.GetAppKey(), e.GetAppKeyKind())
+	if e.GetAppKey() == "" {
+		app = "  (app not identified)"
+	}
+	return fmt.Sprintf("%s → %s %s %s%s", e.GetSrcNodeId(), edgeDst(e),
+		short(e.GetProtocol().String(), "NETWORK_PROTOCOL_"), edgeAlgo(e), app)
+}
+
+type edgeCount struct {
+	edge  *discoveryv1.ObservedEdge
+	count uint64
+}
+
+// indexEdges — 엣지 id → 엣지와 횟수. 정규화가 같은 id를 이미 합치지만, 합치지 않은 입력이 와도 횟수를 더한다.
+func indexEdges(es []*discoveryv1.ObservedEdge) map[string]edgeCount {
+	m := make(map[string]edgeCount, len(es))
+	for _, e := range es {
+		id := normalize.EdgeIdentity(e)
+		c, ok := m[id]
+		if !ok {
+			c.edge = e
+		}
+		c.count += e.GetObservedCount()
+		m[id] = c
+	}
+	return m
+}
+
+func sortedEdgeKeys(m map[string]edgeCount) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func section(b *strings.Builder, title string, lines []string) {

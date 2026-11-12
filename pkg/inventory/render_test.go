@@ -101,3 +101,51 @@ func TestRenderDiffWarnsOnRulesetChange(t *testing.T) {
 		t.Errorf("the ruleset is the same yet a warning appeared:\n%s", out)
 	}
 }
+
+// 앱 키 2단계: diff가 엣지를 엣지 id로 맞대어 사라짐·추가·횟수 변경을 적는다.
+func TestRenderDiffEdges(t *testing.T) {
+	edge := func(app, kind string, n uint64) *discoveryv1.ObservedEdge {
+		return &discoveryv1.ObservedEdge{SrcNodeId: "appkey-node", DstAddr: "172.20.0.2:4433", Port: 4433,
+			Protocol: discoveryv1.NetworkProtocol_NETWORK_PROTOCOL_TLS, NegotiatedGroup: "secp256r1",
+			AppKey: app, AppKeyKind: kind, ObservedCount: n}
+	}
+	snap := func(id string, seq int64, edges ...*discoveryv1.ObservedEdge) *history.Snapshot {
+		return &history.Snapshot{ID: id, NodeID: "appkey-node", Seq: seq, RulesetVersion: "r1",
+			CreatedAt: time.Date(2026, 11, 12, 0, 0, int(seq), 0, time.UTC), Edges: edges}
+	}
+	old := snap("old", 1, edge("user@1001.service", "systemd-unit", 8))
+	split := snap("new", 2,
+		edge("user@1001.service/svc-a.service", "systemd-user-unit", 2),
+		edge("user@1001.service/svc-b.service", "systemd-user-unit", 5),
+		edge("", "", 1))
+
+	// 한 엣지가 서비스마다 갈렸다: 사라짐 1, 추가 3.
+	out := inventory.RenderDiff(old, split)
+	for _, want := range []string{
+		"edges removed 1", "- appkey-node → 172.20.0.2:4433 tls secp256r1  @user@1001.service  ×8",
+		"edges added 3",
+		"+ appkey-node → 172.20.0.2:4433 tls secp256r1  @user@1001.service/svc-a.service(systemd-user-unit)  ×2",
+		"+ appkey-node → 172.20.0.2:4433 tls secp256r1  @user@1001.service/svc-b.service(systemd-user-unit)  ×5",
+		"+ appkey-node → 172.20.0.2:4433 tls secp256r1  (app not identified)  ×1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the diff is missing %q:\n%s", want, out)
+		}
+	}
+
+	// 같은 엣지·같은 횟수면 엣지 절이 없다.
+	if out := inventory.RenderDiff(split, snap("again", 3, split.Edges...)); strings.Contains(out, "edges ") {
+		t.Errorf("same edges, yet an edge section appeared:\n%s", out)
+	}
+
+	// 같은 엣지 id의 횟수만 바뀌면 「edges changed」.
+	more := snap("more", 3, edge("user@1001.service/svc-a.service", "systemd-user-unit", 3),
+		edge("user@1001.service/svc-b.service", "systemd-user-unit", 5), edge("", "", 1))
+	out = inventory.RenderDiff(split, more)
+	if !strings.Contains(out, "edges changed 1") || !strings.Contains(out, "svc-a.service(systemd-user-unit)  ×2 → ×3") {
+		t.Errorf("a count change must read as changed:\n%s", out)
+	}
+	if strings.Contains(out, "edges added") || strings.Contains(out, "edges removed") {
+		t.Errorf("only the count changed, yet edges were added or removed:\n%s", out)
+	}
+}
