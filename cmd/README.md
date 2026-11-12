@@ -168,6 +168,7 @@ reported.
 | Tool | Input | What pqcota read | Through |
 |---|---|---|---|
 | CBOMkit (`cbomkit-action` v2.3.0) | a Java 21 example written for the check; CycloneDX 1.6 | `evidence.occurrences.location` and `line`, without a preset | pqcota v0.12.0: the location chosen in a plan stayed the same reference through approval and into the generation record, with and without a guide |
+| CBOMkit (`cbomkit-action` v2.3.0) | a Python 3.13 example written for the check, using `pyca/cryptography` 50.0.2; CycloneDX 1.6 | `evidence.occurrences.location` and `line`, without a preset | pqcota v0.12.0: the location chosen in a plan stayed the same reference through review, signing and the generation record, without a guide |
 | CryptoScan 1.5.0 | a C example written for the check (OpenSSL 3 EVP); CycloneDX 1.6 | `evidence.occurrences.location` and `line` (the tool's `symbol` is kept), without a preset | pqcota v0.12.0: the same, without a guide (no guide in the catalog fits this code) |
 
 CBOMkit, Java example:
@@ -175,6 +176,12 @@ CBOMkit, Java example:
 - The CBOM held 14 locations. Six calls had been marked in the example as expected locations, and all six were reported at exactly those lines.
 - The paths and lines are kept as the tool reported them. The paths start with the directory the source was mounted at for the tool (`ws/`), and the counting base of the line is not stated, so it is shown as unknown.
 - **Limits seen in this run:** a key generator whose algorithm name was passed in a variable was not reported, and a 256-bit AES-GCM key was reported as 128 bits. **Seen in an earlier run** of the same version on other code (2026-11-10): calls to the Bouncy Castle lightweight API (`MLKEMGenerator` and the like) were not reported.
+
+CBOMkit, Python example:
+
+- The consolidated CBOM held 6 locations in `evidence.occurrences`, all read without a preset. They pointed at 3 distinct source lines, all key-generation calls (AES-GCM key, RSA-3072 key, EC P-256 key).
+- The location referenced in the plan was the RSA-3072 key generation at line 27, and that reference was kept through review, signing and the generation record.
+- **Limits seen in this run:** the calls that encrypt, wrap the document key with RSA-OAEP, sign and hash were not reported for this example.
 
 CryptoScan, C example:
 

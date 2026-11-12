@@ -163,6 +163,7 @@ pqcota-cbom-ingest <cbom.json | -> [target-node-id] --source-evidence
 | 도구 | 입력 | pqcota가 읽은 것 | 어디까지 |
 |---|---|---|---|
 | CBOMkit(`cbomkit-action` v2.3.0) | 확인용으로 직접 작성한 Java 21 예제, CycloneDX 1.6 | 프리셋 없이 `evidence.occurrences.location`과 `line` | pqcota v0.12.0에서 계획이 고른 위치가 승인을 거쳐 생성 기록까지 같은 참조로 남았습니다(가이드가 있을 때와 없을 때 모두) |
+| CBOMkit(`cbomkit-action` v2.3.0) | 확인용으로 직접 작성한 Python 3.13 예제(`pyca/cryptography` 50.0.2), CycloneDX 1.6 | 프리셋 없이 `evidence.occurrences.location`과 `line` | pqcota v0.12.0에서 계획이 고른 위치가 검토·서명·생성 기록까지 같은 참조로 남았습니다. 가이드 없이 확인했습니다 |
 | CryptoScan 1.5.0 | 확인용으로 직접 작성한 C 예제(OpenSSL 3 EVP), CycloneDX 1.6 | 프리셋 없이 `evidence.occurrences.location`과 `line`(도구의 `symbol`도 보존) | pqcota v0.12.0에서 같습니다. 가이드 없이 확인했습니다(이 코드에 맞는 가이드가 카탈로그에 없습니다) |
 
 CBOMkit, Java 예제:
@@ -170,6 +171,12 @@ CBOMkit, Java 예제:
 - CBOM에 들어 있던 위치는 14개입니다. 예제에 기대 위치로 표시해 둔 호출 여섯 곳은 모두 그 줄 그대로 보고됐습니다.
 - 경로와 줄은 도구가 보고한 값 그대로 보존됩니다. 경로는 도구에 소스를 붙인 자리(`ws/`)로 시작하고, 줄은 몇부터 세는지 적혀 있지 않아 모름으로 보입니다.
 - **이번 실행의 한계:** 알고리즘 이름을 변수로 넘긴 키 생성기는 보고되지 않았고, 256비트 AES-GCM 키를 128비트로 보고했습니다. **이전 실행에서 본 것**(2026-11-10, 같은 판, 다른 코드): Bouncy Castle 경량 API(`MLKEMGenerator` 등) 호출이 보고되지 않았습니다.
+
+CBOMkit, Python 예제:
+
+- 통합 CBOM의 `evidence.occurrences`에 들어 있던 위치 6개를 프리셋 없이 모두 읽었습니다. 이 위치들이 가리킨 서로 다른 소스 줄은 3곳이고, 모두 키 생성 호출입니다(AES-GCM 키, RSA-3072 키, EC P-256 키).
+- 계획에서 참조한 위치는 27행의 RSA-3072 키 생성이고, 그 참조가 검토·서명·생성 기록까지 유지됐습니다.
+- **이번 실행의 한계:** 이 예제에서는 암호화, RSA-OAEP 문서 키 감싸기, 서명, 해시 호출이 보고되지 않았습니다.
 
 CryptoScan, C 예제:
 
