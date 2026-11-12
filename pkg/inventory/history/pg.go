@@ -233,49 +233,41 @@ func (p *PgStore) observe(ctx context.Context, q pgq, nodeID, snapID, ruleset st
 	return err
 }
 
-// currentSeq — 노드의 현재 스냅샷의 seq([Store.Latest]의 약속). 스냅샷이 없으면 ok=false.
+// currentPick — 노드의 현재 스냅샷의 seq를 `pick`으로 내는 WITH 절($1 = org, $2 = node). [Store.Latest]의 약속:
 //
 //   - 관측 기록이 없다 → seq가 가장 큰 스냅샷
 //   - 가장 최근 관측 기록보다 나중에 만든 스냅샷이 있다(관측 기록 없이 쓴 옛 적재) → seq가 가장 큰 스냅샷
 //   - 가장 최근 관측 기록이 가리키는 스냅샷이 없다 → seq가 가장 큰 스냅샷
 //   - 그 밖 → 가장 최근 관측 기록이 가리키는 스냅샷
+//
+// **고르기와 읽기를 한 SQL 문으로 한다.** 문 하나는 한 시점의 데이터를 본다. seq를 고른 뒤 다른 문으로 행을
+// 읽으면, 그 사이에 새 상태가 적재되고 정리가 옛 현재 스냅샷을 지울 때 이력이 남은 노드에서도 빈 결과가 나온다.
+const currentPick = `WITH newest AS (
+	SELECT seq, created_at FROM pqcota_snapshots WHERE org=$1 AND node_id=$2 ORDER BY seq DESC LIMIT 1
+), obs AS (
+	SELECT snapshot_id, observed_at FROM pqcota_observations WHERE org=$1 AND node_id=$2 ORDER BY seq DESC LIMIT 1
+), observed AS (
+	SELECT s.seq FROM pqcota_snapshots s JOIN obs ON s.id = obs.snapshot_id
+	WHERE s.org=$1 AND s.node_id=$2 ORDER BY s.seq DESC LIMIT 1
+), pick AS (
+	SELECT CASE
+		WHEN (SELECT observed_at FROM obs) IS NULL THEN (SELECT seq FROM newest)
+		WHEN (SELECT created_at FROM newest) > (SELECT observed_at FROM obs) THEN (SELECT seq FROM newest)
+		WHEN (SELECT seq FROM observed) IS NULL THEN (SELECT seq FROM newest)
+		ELSE (SELECT seq FROM observed)
+	END AS seq
+)`
+
+// currentSeq — 노드의 현재 스냅샷의 seq([currentPick]). 스냅샷이 없으면 ok=false. 정리가 노드 잠금 안에서 쓴다.
 func (p *PgStore) currentSeq(ctx context.Context, q pgq, nodeID string) (int64, bool, error) {
-	var newest int64
-	var newestAt time.Time
-	err := q.QueryRow(ctx,
-		`SELECT seq, created_at FROM pqcota_snapshots WHERE org=$1 AND node_id=$2 ORDER BY seq DESC LIMIT 1`,
-		p.org, nodeID).Scan(&newest, &newestAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	var seq *int64
+	if err := q.QueryRow(ctx, currentPick+` SELECT seq FROM pick`, p.org, nodeID).Scan(&seq); err != nil {
+		return 0, false, err
+	}
+	if seq == nil {
 		return 0, false, nil
 	}
-	if err != nil {
-		return 0, false, err
-	}
-	var obsSnap string
-	var obsAt time.Time
-	err = q.QueryRow(ctx,
-		`SELECT snapshot_id, observed_at FROM pqcota_observations WHERE org=$1 AND node_id=$2 ORDER BY seq DESC LIMIT 1`,
-		p.org, nodeID).Scan(&obsSnap, &obsAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return newest, true, nil
-	}
-	if err != nil {
-		return 0, false, err
-	}
-	if newestAt.After(obsAt) {
-		return newest, true, nil
-	}
-	var cur int64
-	err = q.QueryRow(ctx,
-		`SELECT seq FROM pqcota_snapshots WHERE org=$1 AND node_id=$2 AND id=$3 ORDER BY seq DESC LIMIT 1`,
-		p.org, nodeID, obsSnap).Scan(&cur)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return newest, true, nil
-	}
-	if err != nil {
-		return 0, false, err
-	}
-	return cur, true, nil
+	return *seq, true, nil
 }
 
 // ObservationStats — 노드의 스냅샷별 관측 요약(횟수·첫·마지막).
@@ -302,15 +294,10 @@ func (p *PgStore) ObservationStats(nodeID string) (map[string]ObsStat, error) {
 // snapCols — 스캔 순서는 scanSnapshot과 반드시 일치해야 한다.
 const snapCols = `seq,id,node_id,ruleset_ver,findings,completeness,edges,created_at,excluded_by_scope`
 
-// Latest — 노드의 현재 스냅샷([Store.Latest]의 약속, [PgStore.currentSeq]).
+// Latest — 노드의 현재 스냅샷([Store.Latest]의 약속, [currentPick]). 고르기와 읽기가 한 문이다.
 func (p *PgStore) Latest(nodeID string) (*Snapshot, error) {
-	ctx := context.Background()
-	seq, ok, err := p.currentSeq(ctx, p.pool, nodeID)
-	if err != nil || !ok {
-		return nil, err
-	}
-	row := p.pool.QueryRow(ctx,
-		`SELECT `+snapCols+` FROM pqcota_snapshots WHERE org=$1 AND seq=$2`, p.org, seq)
+	row := p.pool.QueryRow(context.Background(),
+		currentPick+` SELECT `+snapCols+` FROM pqcota_snapshots WHERE org=$1 AND seq=(SELECT seq FROM pick)`, p.org, nodeID)
 	return scanSnapshot(row)
 }
 

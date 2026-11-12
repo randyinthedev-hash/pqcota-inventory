@@ -240,3 +240,74 @@ func TestCurrentSnapshotSurvivesConcurrentPrune(t *testing.T) {
 		}
 	}
 }
+
+// TestLatestDuringIngestAndPrune — 조회 중에 새 상태가 적재되고 정리가 옛 현재 스냅샷을 지워도, 이력이 남은
+// 노드의 Latest는 빈 결과를 내지 않고 그 시점의 온전한 스냅샷을 낸다(고르기와 읽기가 한 문이다).
+func TestLatestDuringIngestAndPrune(t *testing.T) {
+	dsn := pgDSN(t)
+	ctx := context.Background()
+	st, err := history.NewPgStore(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	node := uniqueNode("host://readrace-")
+	if err := st.Append(snapOf(node+"-0", node, "3.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	wg.Add(1)
+	go func() { // 쓰기: 매번 새 내용을 적재하고 keep-last 1로 정리한다. 옛 현재 스냅샷이 계속 지워진다.
+		defer wg.Done()
+		defer close(stop)
+		for i := 1; i <= 150; i++ {
+			if err := st.Append(snapOf(fmt.Sprintf("%s-%d", node, i), node, fmt.Sprintf("3.0.%d", i))); err != nil {
+				errs <- err
+				return
+			}
+			if _, err := st.Prune(history.Policy{KeepLast: 1}, true); err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+	var reads, empties int
+	var mu sync.Mutex
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				s, err := st.Latest(node)
+				mu.Lock()
+				reads++
+				switch {
+				case err != nil:
+					errs <- err
+				case s == nil:
+					empties++
+				case len(s.Findings) != 1 || s.Findings[0].GetOpenssl().GetVersion() == "":
+					errs <- fmt.Errorf("Latest returned a partial snapshot %s", s.ID)
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if empties > 0 {
+		t.Fatalf("Latest returned no snapshot %d times in %d reads, though the node always had history", empties, reads)
+	}
+	t.Logf("%d reads, none empty", reads)
+}
