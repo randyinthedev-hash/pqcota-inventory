@@ -201,3 +201,26 @@ func TestRenderDiffNoChange(t *testing.T) {
 		t.Errorf("a diff of identical snapshots must say there is no change:\n%s", out)
 	}
 }
+
+// A → B → A 뒤의 이력: 맨 아래 행(B)이 아니라 다시 적재한 A가 현재로 표시된다(pqcota-inventory#1).
+func TestRenderHistoryMarksCurrent(t *testing.T) {
+	store := history.NewMemStore()
+	a := snapOf(t, store, "snap-a", "3.0.20", "", nil)
+	snapOf(t, store, "snap-b", "3.5.0", extraLibssl, nil)
+	again := snapOf(t, store, "snap-a2", "3.0.20", "", nil)
+	if again.ID != a.ID {
+		t.Fatalf("the same content must reuse snap-a, got %s", again.ID)
+	}
+	snaps, _ := store.Snapshots("node-db")
+	stats, _ := store.ObservationStats("node-db")
+	cur, _ := store.Latest("node-db")
+	out := inventory.RenderHistoryWithCurrent("node-db", snaps, stats, nil, cur.ID)
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "← current") && !strings.Contains(line, "snap-a") {
+			t.Errorf("the current mark is on the wrong row: %s", line)
+		}
+	}
+	if strings.Count(out, "← current") != 1 {
+		t.Errorf("exactly one row must be marked current:\n%s", out)
+	}
+}

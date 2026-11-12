@@ -14,6 +14,7 @@ import (
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -162,39 +163,119 @@ func (p *PgStore) Append(s *Snapshot) error {
 	hash := ContentHash(s)
 	hashV1 := ContentHashV1(s)
 
-	// 실질 내용이 직전과 같으면 스냅샷을 새로 만들지 않는다 — 관측 기록만 남긴다.
+	// 노드마다 잠근다. 정리(Prune)가 「현재가 아니다」라고 보고 지우는 스냅샷을 이 적재가 동시에 다시
+	// 쓰면, 관측 기록이 사라진 스냅샷을 가리키게 된다. 둘 다 같은 잠금 안에서 읽고 쓴다.
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // 커밋한 뒤의 롤백은 아무 일도 하지 않는다
+	if err := p.lockNode(ctx, tx, s.NodeID); err != nil {
+		return err
+	}
+
+	// 실질 내용이 이력의 어느 스냅샷과 같으면 스냅샷을 새로 만들지 않는다 — 관측 기록만 남긴다.
+	// 중간에 변했다 되돌아온 경우(A → B → A)도 그 최신 동일본을 가리킨다. 지금 상태는 관측 기록이
+	// 정한다([PgStore.Latest]).
 	var prevID string
 	var prevSeq int64
 	var prevAt time.Time
-	err = p.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`SELECT id, seq, created_at FROM pqcota_snapshots
 		 WHERE org=$1 AND node_id=$2 AND ruleset_ver=$3 AND content_hash_v1=$4 ORDER BY seq DESC LIMIT 1`,
 		p.org, s.NodeID, s.RulesetVersion, hashV1).Scan(&prevID, &prevSeq, &prevAt)
 	switch {
 	case err == nil:
-		// 직전 스냅샷과 같은 내용인지 확인 — 중간에 변했다 되돌아온 경우도 그 최신 동일본을 가리킨다.
 		s.ID, s.Seq, s.CreatedAt, s.Created = prevID, prevSeq, prevAt, false
-		return p.observe(ctx, s.NodeID, prevID, s.RulesetVersion)
+		if err := p.observe(ctx, tx, s.NodeID, prevID, s.RulesetVersion); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return err
 	}
 
 	// seq·created_at은 DB가 부여한다 — RETURNING으로 되받아 호출자의 스냅샷에 채운다.
-	if err := p.pool.QueryRow(ctx,
-		`INSERT INTO pqcota_snapshots(org,id,node_id,ruleset_ver,findings,completeness,edges,content_hash,excluded_by_scope,content_hash_v1)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING seq, created_at`,
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO pqcota_snapshots(org,id,node_id,ruleset_ver,findings,completeness,edges,content_hash,excluded_by_scope,content_hash_v1,created_at)
+		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,clock_timestamp()) RETURNING seq, created_at`,
 		p.org, s.ID, s.NodeID, s.RulesetVersion, fj, cj, ej, hash, s.ExcludedByScope, hashV1).Scan(&s.Seq, &s.CreatedAt); err != nil {
 		return err
 	}
 	s.Created = true
-	return p.observe(ctx, s.NodeID, s.ID, s.RulesetVersion)
+	if err := p.observe(ctx, tx, s.NodeID, s.ID, s.RulesetVersion); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-func (p *PgStore) observe(ctx context.Context, nodeID, snapID, ruleset string) error {
-	_, err := p.pool.Exec(ctx,
-		`INSERT INTO pqcota_observations(org,node_id,snapshot_id,ruleset_ver) VALUES($1,$2,$3,$4)`,
+// pgq — 풀과 트랜잭션이 함께 갖는 조회. 같은 질의를 잠금 안팎에서 쓴다.
+type pgq interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// lockNode — (조직, 노드)마다의 트랜잭션 잠금. 커밋·롤백 때 풀린다. 키는 두 해시다. 서로 다른 노드의
+// 해시가 겹치면 그 둘이 한 줄로 설 뿐이고(느려질 뿐), 틀린 결과가 나오지는 않는다.
+func (p *PgStore) lockNode(ctx context.Context, tx pgx.Tx, nodeID string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, string(p.org), nodeID)
+	return err
+}
+
+// observe — 관측 기록 한 행. 시각은 잠금을 잡은 뒤의 실제 시각(clock_timestamp)이다. 트랜잭션 시작
+// 시각(now())을 쓰면, 잠금을 늦게 잡은 적재의 시각이 먼저 끝난 적재보다 앞서 [PgStore.currentSeq]의
+// 시각 비교가 뒤집힌다. 스냅샷의 created_at도 같은 까닭으로 clock_timestamp다.
+func (p *PgStore) observe(ctx context.Context, q pgq, nodeID, snapID, ruleset string) error {
+	_, err := q.Exec(ctx,
+		`INSERT INTO pqcota_observations(org,node_id,snapshot_id,ruleset_ver,observed_at) VALUES($1,$2,$3,$4,clock_timestamp())`,
 		p.org, nodeID, snapID, ruleset)
 	return err
+}
+
+// currentSeq — 노드의 현재 스냅샷의 seq([Store.Latest]의 약속). 스냅샷이 없으면 ok=false.
+//
+//   - 관측 기록이 없다 → seq가 가장 큰 스냅샷
+//   - 가장 최근 관측 기록보다 나중에 만든 스냅샷이 있다(관측 기록 없이 쓴 옛 적재) → seq가 가장 큰 스냅샷
+//   - 가장 최근 관측 기록이 가리키는 스냅샷이 없다 → seq가 가장 큰 스냅샷
+//   - 그 밖 → 가장 최근 관측 기록이 가리키는 스냅샷
+func (p *PgStore) currentSeq(ctx context.Context, q pgq, nodeID string) (int64, bool, error) {
+	var newest int64
+	var newestAt time.Time
+	err := q.QueryRow(ctx,
+		`SELECT seq, created_at FROM pqcota_snapshots WHERE org=$1 AND node_id=$2 ORDER BY seq DESC LIMIT 1`,
+		p.org, nodeID).Scan(&newest, &newestAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	var obsSnap string
+	var obsAt time.Time
+	err = q.QueryRow(ctx,
+		`SELECT snapshot_id, observed_at FROM pqcota_observations WHERE org=$1 AND node_id=$2 ORDER BY seq DESC LIMIT 1`,
+		p.org, nodeID).Scan(&obsSnap, &obsAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return newest, true, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if newestAt.After(obsAt) {
+		return newest, true, nil
+	}
+	var cur int64
+	err = q.QueryRow(ctx,
+		`SELECT seq FROM pqcota_snapshots WHERE org=$1 AND node_id=$2 AND id=$3 ORDER BY seq DESC LIMIT 1`,
+		p.org, nodeID, obsSnap).Scan(&cur)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return newest, true, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return cur, true, nil
 }
 
 // ObservationStats — 노드의 스냅샷별 관측 요약(횟수·첫·마지막).
@@ -221,10 +302,15 @@ func (p *PgStore) ObservationStats(nodeID string) (map[string]ObsStat, error) {
 // snapCols — 스캔 순서는 scanSnapshot과 반드시 일치해야 한다.
 const snapCols = `seq,id,node_id,ruleset_ver,findings,completeness,edges,created_at,excluded_by_scope`
 
+// Latest — 노드의 현재 스냅샷([Store.Latest]의 약속, [PgStore.currentSeq]).
 func (p *PgStore) Latest(nodeID string) (*Snapshot, error) {
-	row := p.pool.QueryRow(context.Background(),
-		`SELECT `+snapCols+` FROM pqcota_snapshots
-		 WHERE org=$1 AND node_id=$2 ORDER BY seq DESC LIMIT 1`, p.org, nodeID)
+	ctx := context.Background()
+	seq, ok, err := p.currentSeq(ctx, p.pool, nodeID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	row := p.pool.QueryRow(ctx,
+		`SELECT `+snapCols+` FROM pqcota_snapshots WHERE org=$1 AND seq=$2`, p.org, seq)
 	return scanSnapshot(row)
 }
 
@@ -266,7 +352,11 @@ func (p *PgStore) Nodes() ([]string, error) {
 }
 
 func (p *PgStore) Snapshots(nodeID string) ([]*Snapshot, error) {
-	rows, err := p.pool.Query(context.Background(),
+	return p.snapshots(context.Background(), p.pool, nodeID)
+}
+
+func (p *PgStore) snapshots(ctx context.Context, q pgq, nodeID string) ([]*Snapshot, error) {
+	rows, err := q.Query(ctx,
 		`SELECT `+snapCols+` FROM pqcota_snapshots
 		 WHERE org=$1 AND node_id=$2 ORDER BY seq ASC`, p.org, nodeID)
 	if err != nil {

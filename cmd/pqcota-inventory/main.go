@@ -73,7 +73,14 @@ func run(store history.Store, dsn, histNode, snapID, diffPair string) (string, e
 				return "", fmt.Errorf("reading retention events: %w", err)
 			}
 		}
-		return inventory.RenderHistory(histNode, snaps, stats, pruned), nil
+		// 지금 상태는 맨 아래 행이 아닐 수 있다(같은 내용이 돌아오면 옛 스냅샷을 다시 쓴다) — 따로 표시한다.
+		current := ""
+		if cur, err := store.Latest(histNode); err != nil {
+			return "", fmt.Errorf("reading the current snapshot: %w", err)
+		} else if cur != nil {
+			current = cur.ID
+		}
+		return inventory.RenderHistoryWithCurrent(histNode, snaps, stats, pruned, current), nil
 
 	case snapID != "":
 		snap, err := mustSnapshot(store, snapID)

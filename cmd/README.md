@@ -285,6 +285,8 @@ The **direction convention of `-diff`: first argument = past, second = latest** 
 
 **Snapshots accumulate only at change points.** Observing the same state again does not create a new snapshot and leaves only an **observation record** (lightweight), so the `obs` and `observed` columns of `-history` show "how many times and until when that state was re-confirmed". So the heavy storage grows **only as many times as there are changes**, yet the evidence that "it was scanned every time" is kept.
 
+**The latest snapshot is the last state loaded, not the bottom row.** Because a state seen before reuses its earlier snapshot, content that goes A → B → A leaves two snapshots, A and B, and the node is in state A. A node's latest snapshot is the one its most recent observation record points to; the view with no arguments, the load summary and the provisioning before-capture all read it. `-history` marks that row `← current (last ingested)`. For history written without observation records, the newest snapshot is taken.
+
 ### `pqcota-source-evidence`
 
 ```
@@ -326,7 +328,7 @@ pqcota-prune [-older-than 90d] [-keep-last N] [-apply]
 
 If you give both axes, the decision is **conservative** (only when both allow discarding). With no policy at all, it refuses.
 
-Three invariants: **the latest is untouchable** (each node's latest is never deleted by any policy: it is the basis of the inventory view and of the provisioning before-capture), **no modification** (the remaining snapshots stay byte for byte), and **the fact of truncation is recorded** (`-history` announces it with a `⌫` line; without it a gap in the history would read as "not observed"). It is **deliberately separated** from the query commands. If a read tool also performed destructive actions, one mistake would erase the history.
+Three invariants: **the latest is untouchable** (each node's latest snapshot, which is the last state loaded, and its newest change point are never deleted by any policy: the latest is the basis of the inventory view and of the provisioning before-capture), **no modification** (the remaining snapshots stay byte for byte), and **the fact of truncation is recorded** (`-history` announces it with a `⌫` line; without it a gap in the history would read as "not observed"). It is **deliberately separated** from the query commands. If a read tool also performed destructive actions, one mistake would erase the history.
 
 ## ⑤ Metadata · declaration import
 

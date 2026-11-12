@@ -134,6 +134,14 @@ func Plural(n int, unit string) string {
 // 관측 사실 서술이지 판정이 아니다 — 변화가 선언과 맞는지·의미 있는지는 판정이라 하지 않는다(아키텍처 §6).
 func RenderHistory(nodeID string, snaps []*history.Snapshot, stats map[string]history.ObsStat,
 	pruned []history.RetentionEvent) string {
+	return RenderHistoryWithCurrent(nodeID, snaps, stats, pruned, "")
+}
+
+// RenderHistoryWithCurrent — [RenderHistory]에 노드의 현재 스냅샷(가장 최근에 적재한 상태, [history.Store.Latest])을
+// 표시한다. 같은 내용이 돌아오면 스냅샷을 새로 만들지 않으므로(A → B → A), 맨 아래 행이 지금 상태라는 보장이
+// 없다. current가 빈 값이면 표시하지 않는다.
+func RenderHistoryWithCurrent(nodeID string, snaps []*history.Snapshot, stats map[string]history.ObsStat,
+	pruned []history.RetentionEvent, current string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "node %s — %s (oldest first)\n", nodeID, Plural(len(snaps), "change point"))
 	// 절단이 있었으면 먼저 고지한다 — 안 그러면 이력의 구멍이 "관측을 안 함"으로 읽힌다(§2.6 정신).
@@ -158,9 +166,13 @@ func RenderHistory(nodeID string, snaps []*history.Snapshot, stats map[string]hi
 			obs = fmt.Sprintf("%d", st.Count)
 			window = st.First.Format("01-02 15:04") + "~" + st.Last.Format("01-02 15:04")
 		}
-		fmt.Fprintf(&b, "%-6d %-19s %-13s %8d %6d %5s %-24s %-18s %s\n",
+		mark := ""
+		if current != "" && s.ID == current {
+			mark = "   ← current (last ingested)"
+		}
+		fmt.Fprintf(&b, "%-6d %-19s %-13s %8d %6d %5s %-24s %-18s %s%s\n",
 			s.Seq, s.CreatedAt.Format("2006-01-02 15:04:05"), s.RulesetVersion,
-			len(s.Findings), len(s.Edges), obs, window, gapOf(s), s.ID)
+			len(s.Findings), len(s.Edges), obs, window, gapOf(s), s.ID, mark)
 	}
 	b.WriteString("\n(snapshots accumulate only when the content changes — obs/observed show how often and until when that state was re-confirmed.\n")
 	b.WriteString(" gap = a layer that cannot be observed by design, not \"absent\". Pass the snapshot value straight to -snapshot/-diff.)\n")

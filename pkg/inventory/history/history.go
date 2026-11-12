@@ -60,6 +60,11 @@ type Store interface {
 	// 기존 것을 가리킨다. 적재 후 s.Seq·s.CreatedAt·s.Created를 저장소가 채워 넣는다.
 	Append(*Snapshot) error
 	Snapshots(nodeID string) ([]*Snapshot, error)
+	// Latest — 노드의 **현재 스냅샷**: 가장 최근에 적재한 상태다. seq가 가장 큰 스냅샷이 아니다.
+	// 같은 내용이 다시 오면 새 스냅샷을 만들지 않으므로(A → B → A의 세 번째 A는 첫 A를 다시 쓴다)
+	// 「지금 상태」는 관측 기록이 정한다. 가장 최근 관측 기록이 가리키는 스냅샷이 현재다. 다만 관측
+	// 기록이 없거나, 그보다 나중에 관측 기록 없이 만들어진 스냅샷이 있거나, 가리키는 스냅샷이 없으면
+	// seq가 가장 큰 스냅샷이다(관측 기록 이전의 옛 이력). 없으면 (nil, nil).
 	Latest(nodeID string) (*Snapshot, error)
 	ByID(id string) (*Snapshot, error) // 스냅샷 단건(이력 상세·diff용). 없으면 (nil, nil).
 	Nodes() ([]string, error)          // 스냅샷을 가진 전 노드 ID(인벤토리 뷰가 "전체"를 훑기 위함)
@@ -92,6 +97,7 @@ type MemStore struct {
 	hash   map[string]string              // 스냅샷 id → 내용 지문(중복 억제, 옛 규칙)
 	hashV1 map[string]string              // 스냅샷 id → 참조용 지문(v1). **접는 기준**
 	obs    map[string]map[string]*ObsStat // node → 스냅샷 id → 관측 요약
+	cur    map[string]string              // node → 가장 최근 관측이 가리킨 스냅샷 id(현재 스냅샷, [Store.Latest])
 	events []RetentionEvent               // 절단 기록(보존 정책 집행 흔적)
 	rej    memRejections                  // 거절 기록(받지 않은 사실)
 	attr   memAttributions                // 사람이 선언한 앱(스냅샷 타임라인 밖)
@@ -120,6 +126,7 @@ func newMem(o org.ID) *MemStore {
 		hash:   make(map[string]string),
 		hashV1: make(map[string]string),
 		obs:    make(map[string]map[string]*ObsStat),
+		cur:    make(map[string]string),
 	}
 }
 
@@ -128,10 +135,12 @@ func (m *MemStore) Append(s *Snapshot) error {
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
 
-	// 실질 내용이 직전과 같으면 스냅샷을 새로 만들지 않는다 — 관측 사실만 기록.
+	// 실질 내용이 이력의 어느 스냅샷과 같으면 스냅샷을 새로 만들지 않는다 — 관측 사실만 기록한다.
+	// PgStore와 같은 규칙이다: 이력 전체에서 같은 규칙 판·같은 v1 지문의 가장 최근 행을 다시 쓴다
+	// (A → B → A의 세 번째 A는 첫 A를 가리킨다). 지금 상태는 관측 기록이 정한다([MemStore.Latest]).
 	// **v1 지문으로 접는다.** 옛 지문(ContentHash)으로 접으면 v1이 없는 옛 행이 재사용되어
 	// v1 참조가 영원히 찾히지 않는다. v1이 빈 옛 행은 같은 행이 아니다 — 새 행을 만든다.
-	if prev := m.latestLocked(s.NodeID); prev != nil && m.hashV1[prev.ID] != "" && m.hashV1[prev.ID] == ContentHashV1(s) {
+	if prev := m.sameContentLocked(s); prev != nil {
 		s.ID, s.Seq, s.CreatedAt, s.Created = prev.ID, prev.Seq, prev.CreatedAt, false
 		m.observeLocked(s.NodeID, prev.ID, now)
 		return nil
@@ -150,11 +159,32 @@ func (m *MemStore) Append(s *Snapshot) error {
 	return nil
 }
 
-func (m *MemStore) latestLocked(nodeID string) *Snapshot {
-	if s := m.byNode[nodeID]; len(s) > 0 {
-		return s[len(s)-1]
+// sameContentLocked — 같은 노드·같은 규칙 판·같은 v1 지문의 가장 최근 스냅샷. 없으면 nil.
+func (m *MemStore) sameContentLocked(s *Snapshot) *Snapshot {
+	h := ContentHashV1(s)
+	snaps := m.byNode[s.NodeID]
+	for i := len(snaps) - 1; i >= 0; i-- {
+		if p := snaps[i]; p.RulesetVersion == s.RulesetVersion && m.hashV1[p.ID] != "" && m.hashV1[p.ID] == h {
+			return p
+		}
 	}
 	return nil
+}
+
+// currentLocked — 노드의 현재 스냅샷: 가장 최근 관측이 가리킨 스냅샷. 그것이 없으면 seq가 가장 큰 스냅샷.
+func (m *MemStore) currentLocked(nodeID string) *Snapshot {
+	snaps := m.byNode[nodeID]
+	if len(snaps) == 0 {
+		return nil
+	}
+	if id := m.cur[nodeID]; id != "" {
+		for i := len(snaps) - 1; i >= 0; i-- {
+			if snaps[i].ID == id {
+				return snaps[i]
+			}
+		}
+	}
+	return snaps[len(snaps)-1]
 }
 
 func (m *MemStore) observeLocked(nodeID, snapID string, at time.Time) {
@@ -168,6 +198,7 @@ func (m *MemStore) observeLocked(nodeID, snapID string, at time.Time) {
 	}
 	st.Count++
 	st.Last = at
+	m.cur[nodeID] = snapID
 }
 
 func (m *MemStore) ObservationStats(nodeID string) (map[string]ObsStat, error) {
@@ -220,13 +251,11 @@ func (m *MemStore) Snapshots(nodeID string) ([]*Snapshot, error) {
 	return out, nil
 }
 
+// Latest — 노드의 현재 스냅샷(가장 최근 관측이 가리킨 스냅샷). [Store.Latest]의 약속을 보라.
 func (m *MemStore) Latest(nodeID string) (*Snapshot, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if s := m.byNode[nodeID]; len(s) > 0 {
-		return s[len(s)-1], nil
-	}
-	return nil, nil
+	return m.currentLocked(nodeID), nil
 }
 
 func (m *MemStore) Nodes() ([]string, error) {

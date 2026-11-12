@@ -16,8 +16,9 @@ import (
 // 원칙 셋:
 //   - **수정 금지.** 남은 스냅샷은 바이트 그대로다. 절단은 과거를 바꾸는 게 아니라 보관을 끝내는 것이라
 //     append-only 불변식(§1.2)과 양립한다.
-//   - **최신 불가침.** 노드별 최신 스냅샷은 어떤 정책으로도 지우지 않는다 — 인벤토리 뷰와
-//     프로비저닝 before 캡처의 근거다.
+//   - **최신 불가침.** 노드별 최신 스냅샷(seq가 가장 큰 것)과 **현재 스냅샷**(가장 최근 관측이 가리킨
+//     것, [Store.Latest])은 어떤 정책으로도 지우지 않는다 — 인벤토리 뷰와 프로비저닝 before 캡처의 근거다.
+//     A → B → A 뒤에는 둘이 다르다(B와 A).
 //   - **지운 사실을 남긴다.** 절단하면 이력에 구멍이 생기는데, 기록이 없으면 "관측을 안 한 것"과
 //     구분되지 않는다. §2.6 "갭 ≠ 부재"를 시간축으로 옮긴 것이다.
 
@@ -112,7 +113,7 @@ type Pruner interface {
 
 // prunable — 정책에 따라 지울 스냅샷을 고른다. snaps는 seq 오름차순(오래된 것부터).
 // 최신 1건은 무조건 보존한다.
-func prunable(snaps []*Snapshot, p Policy, now time.Time) []*Snapshot {
+func prunable(snaps []*Snapshot, p Policy, now time.Time, current string) []*Snapshot {
 	if len(snaps) <= 1 {
 		return nil // 최신 불가침 — 1건뿐이면 지울 게 없다
 	}
@@ -124,6 +125,9 @@ func prunable(snaps []*Snapshot, p Policy, now time.Time) []*Snapshot {
 	for i, s := range snaps {
 		if i == len(snaps)-1 {
 			break // 최신 불가침
+		}
+		if s.ID == current {
+			continue // 현재 스냅샷(가장 최근 관측이 가리킨 것)도 불가침 — A → B → A 뒤의 A
 		}
 		rn := len(snaps) - i // 최신이 1
 		if p.KeepLast > 0 && rn <= p.KeepLast {
@@ -154,7 +158,11 @@ func (m *MemStore) Prune(p Policy, apply bool) (*PruneReport, error) {
 	sort.Strings(nodes)
 
 	for _, node := range nodes {
-		victims := prunable(m.byNode[node], p, now)
+		cur := ""
+		if c := m.currentLocked(node); c != nil {
+			cur = c.ID
+		}
+		victims := prunable(m.byNode[node], p, now, cur)
 		if len(victims) == 0 {
 			continue
 		}
