@@ -8,6 +8,8 @@
 //
 // usage: pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
 //
+//	pqcota-ingest -verify-keys <results-dir>
+//
 //	results-dir       : *.json(단일 객체)·*.jsonl(한 줄=한 결과) — Ansible/업로드로 회수된 것.
 //	                    형식은 확장자가 아니라 내용으로 판별한다(pkg/inventory/resultio).
 //	                    **해독하지 못한 입력이 하나라도 있으면 적재하지 않는다** — 반쪽짜리
@@ -17,7 +19,14 @@
 //	                    자산만** 남긴다(§1.4 노드 게이트를 자산 단위로). 제외분은 적재되지 않되
 //	                    몇 건인지 고지된다 — 제외는 부재가 아니다(§2.6).
 //	env PQCOTA_DSN     : (선택) 있으면 Postgres 영속화, 없으면 인메모리(요약만).
-//	env PQCOTA_VERIFY_KEY        : (선택) 콤마 구분 base64 공개키. 있으면 서명 검증.
+//	-verify-keys      : 전환 점검. 저장하지 않고, 결과마다 collector_id·서명 여부·맞은 키의 지문·판정을 낸다.
+//	                    스코프 게이트도 보지 않는다. 거부가 하나라도 있으면 종료 코드 1.
+//	env PQCOTA_VERIFY_KEY        : (선택) 서명 검증 키. 꼴이 모드를 정한다.
+//	                               `<collector-id>:<base64 공개키>,...` → ID 결합 모드. 결과의 collector_id에
+//	                               등록된 키로만 검증하고, **서명이 언제나 필수다**(PQCOTA_REQUIRE_SIGNATURE와 무관).
+//	                               같은 ID를 여러 번 적으면 교체용으로 키를 함께 받는다.
+//	                               `<base64 공개키>,...` → 기존 목록 모드. 아무 키로든 맞으면 통과(경고를 낸다).
+//	                               두 꼴이 섞이거나 키가 틀리면 결과를 읽기 전에 종료 코드 2.
 //	env PQCOTA_REQUIRE_SIGNATURE : "1"이면 검증할 키가 없을 때 **적재를 시작하지 않는다.**
 //	                               알리지 않고 통과하는 경로를 닫아야 하는 배포용(§2.6).
 //	env PQCOTA_ORG               : (선택) 이 적재가 속할 조직. 여러 조직이 한 저장소를 쓰면 필수.
@@ -45,13 +54,27 @@ import (
 func main() {
 	scopeAssets := flag.String("scope-assets", "",
 		"asset scope policy CSV — what stays managed within a node (action,runtime,lib,app_key,note)")
+	verifyKeys := flag.Bool("verify-keys", false,
+		"migration check: for each result print collector_id, signed or not, the fingerprint of the matching key and the verdict — stores nothing")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]")
+		fmt.Fprintln(os.Stderr, "       pqcota-ingest -verify-keys <results-dir>")
 		os.Exit(2)
 	}
 	dir := args[0]
+
+	// 키 설정은 결과를 하나도 읽기 전에 본다. 틀린 설정으로 일부만 적재하지 않는다.
+	keys, err := loadVerifyKeys()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "PQCOTA_VERIFY_KEY:", err)
+		os.Exit(2)
+	}
+	for _, w := range keys.warnings() {
+		fmt.Fprintln(os.Stderr, "⚠ PQCOTA_VERIFY_KEY:", w)
+	}
+	requireSig := os.Getenv("PQCOTA_REQUIRE_SIGNATURE") == "1"
 
 	var master *scope.Master
 	if len(args) > 1 {
@@ -78,14 +101,21 @@ func main() {
 		fmt.Fprintf(os.Stderr, "no result found: %s/*.json or %s/*.jsonl\n", dir, dir)
 		os.Exit(1)
 	}
+	if *verifyKeys {
+		os.Exit(checkKeys(os.Stdout, results, keys))
+	}
 
 	store, closeFn, persistent := openStore()
 	defer closeFn()
 
-	// 서명 검증(§2.6) — PQCOTA_VERIFY_KEY(콤마 구분 base64 공개키)가 있으면. 없으면 생략.
+	// 서명 검증(§2.6). ID 결합 모드면 collector_id에 묶인 키로만, 기존 목록 모드면 아무 키로든. 키가 없으면 생략.
 	var verifySig func(*discoveryv1.CollectionResult) bool
-	if pubs := envKeys("PQCOTA_VERIFY_KEY"); len(pubs) > 0 {
-		verifySig = func(r *discoveryv1.CollectionResult) bool { return sign.Verify(pubs, r) }
+	var verifyCollector func(*discoveryv1.CollectionResult) error
+	switch {
+	case keys.bound != nil:
+		verifyCollector = func(r *discoveryv1.CollectionResult) error { return sign.VerifyBound(keys.bound, r) }
+	case len(keys.legacy) > 0:
+		verifySig = func(r *discoveryv1.CollectionResult) bool { return sign.Verify(keys.legacy, r) }
 	}
 
 	// 밀리초까지 — 스냅샷 id(prefix+":"+node)는 -snapshot·-diff가 쓰는 사용자 손잡이라
@@ -99,9 +129,9 @@ func main() {
 	}
 
 	opts := ingest.IngestOptions{
-		Master: master, VerifySig: verifySig, SnapshotPrefix: prefix,
+		Master: master, VerifySig: verifySig, VerifyCollector: verifyCollector, SnapshotPrefix: prefix,
 		RulesetVersion: normalize.RulesetVersion, Store: store, AssetPolicy: assetPolicy,
-		RequireSignature: os.Getenv("PQCOTA_REQUIRE_SIGNATURE") == "1",
+		RequireSignature: requireSig,
 	}
 	// 거절 기록은 남길 수 있을 때만 남긴다 — 인메모리 저장소도 같은 규칙을 만족하므로
 	// 데모에서도 같은 경로를 탄다(실제에 없는 경로를 타지 않게).
@@ -127,8 +157,11 @@ func main() {
 	} else {
 		fmt.Printf("scope gate: skipped (no CMDB given)\n")
 	}
-	if verifySig != nil {
+	if verifyCollector != nil {
+		fmt.Printf("signature check: bound to collector IDs (%d IDs, %d keys) — a signature is required; each result is checked only against the keys registered for its collector_id\n", len(keys.bound), keys.count())
+	} else if verifySig != nil {
 		fmt.Printf("signature check: verified with PQCOTA_VERIFY_KEY (mismatches are rejected, §2.6)\n")
+		fmt.Printf("           the keys are not bound to collector IDs — any listed key passes for any collector. Use <collector-id>:<key>.\n")
 	} else {
 		fmt.Printf("signature check: **not done** — no public key to verify with. The assumption is that transport security covers it.\n")
 		fmt.Printf("           where that assumption does not hold, block it with PQCOTA_REQUIRE_SIGNATURE=1.\n")
@@ -184,21 +217,6 @@ func openStore() (history.Store, func(), bool) {
 		os.Exit(1)
 	}
 	return pg, pg.Close, true
-}
-
-// envKeys — 환경변수의 콤마 구분 base64 공개키 목록.
-func envKeys(name string) []string {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return nil
-	}
-	var out []string
-	for _, k := range strings.Split(v, ",") {
-		if k = strings.TrimSpace(k); k != "" {
-			out = append(out, k)
-		}
-	}
-	return out
 }
 
 func readScope(path string) ([]string, error) {

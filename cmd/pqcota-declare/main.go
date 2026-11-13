@@ -10,6 +10,9 @@
 // usage: pqcota-declare [--out <dir>] <declaration.csv>
 //
 //	→ 이후: pqcota-ingest <dir>  (선언 레인이 히스토리에 적재됨)
+//
+//	env PQCOTA_SIGN_KEY : (선택) base64 ed25519 개인키 → 결과마다 서명. 적재기가 ID 결합 모드면
+//	                      서명이 필수이고 이 키의 공개키가 `declaration-importer`에 등록돼 있어야 한다.
 package main
 
 import (
@@ -19,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/sign"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/declaration"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -41,6 +45,12 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "import:", err)
 		os.Exit(1)
+	}
+	if key := os.Getenv("PQCOTA_SIGN_KEY"); key != "" {
+		if err := sign.SignAll(key, results); err != nil {
+			fmt.Fprintln(os.Stderr, "PQCOTA_SIGN_KEY cannot sign:", err, "— not writing unsigned declarations")
+			os.Exit(1)
+		}
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "mkdir:", err)

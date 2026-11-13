@@ -14,6 +14,7 @@
 
 ```
 pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
+pqcota-ingest -verify-keys <results-dir>
 ```
 
 | 인자 · 옵션 | 하는 일 |
@@ -21,12 +22,13 @@ pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
 | `<results-dir>` | `*.json`(객체 하나)과 `*.jsonl`(한 줄 = 결과 하나)을 모두 읽습니다. **형식은 확장자가 아니라 내용으로 정합니다.** jvm attach 경로는 노드마다 JVM 여러 개를 JSONL로 내보냅니다. 입력 하나라도 해독하지 못하면 **적재하지 않고 멈춥니다.** 절반만 들어가면 빠진 자산과 원래 없는 자산을 구분할 수 없기 때문입니다 |
 | `[scope-master-file]` | 노드 등록 게이트입니다. 주지 않으면 게이트를 건너뜁니다 |
 | `-scope-assets <csv>` | 자산 범위: 등록된 노드 안에서 계속 관리할 자산만 남깁니다(아래) |
+| `-verify-keys` | 수집기 ID에 묶은 키로 옮길 때 쓰는 점검입니다. 아무것도 저장하지 않고 등재 게이트도 적용하지 않습니다. 결과마다 수집기 ID, 서명 여부, 맞은 키의 지문, 판정을 출력합니다. 거부될 결과가 있으면 종료 상태 1입니다. [절차](https://github.com/randyinthedev-hash/pqcota/blob/main/docs/environment-variables.ko.md#기존-배포를-결합-형식으로-옮기기) |
 
 | 환경변수 | 하는 일 |
 |---|---|
 | `PQCOTA_DSN` | Postgres 접속 문자열입니다([형식](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/cmd/README.ko.md#pqcota-hosts)). 없으면 메모리 요약만 나오고 아무것도 저장하지 않습니다 |
-| `PQCOTA_VERIFY_KEY` | 공개 키(쉼표로 구분)입니다. 있으면 결과 서명을 확인하고 맞지 않으면 거부합니다. 키 쌍은 [`pqcota-keygen`](https://github.com/randyinthedev-hash/pqcota-common/blob/main/cmd/README.ko.md#pqcota-keygen)이 만들고, 짝이 되는 개인 키는 **노드의 수집기가** 씁니다 |
-| `PQCOTA_REQUIRE_SIGNATURE` | `1`이면 확인할 키가 없을 때 **적재를 시작하지 않습니다.** 없으면 확인을 건너뛰지만 그 건수를 "서명 확인 안 함"으로 따로 보고합니다. 통과한 것과 같은 자리에 놓지 않습니다 |
+| `PQCOTA_VERIFY_KEY` | 결과 서명을 검증할 키입니다. `<collector-id>:<공개 키>` 항목(쉼표로 구분)으로 적으면 결과마다 그 결과가 적은 수집기의 키로만 검증하고, **서명이 언제나 필수가 됩니다.** 공개 키만 나열하면 기존 형식입니다. 등록된 키 가운데 아무것으로나 맞으면 어느 수집기든 통과하고 경고를 냅니다. 값이 틀리면 결과를 읽기 전에 상태 2로 멈춥니다. 키 쌍은 [`pqcota-keygen`](https://github.com/randyinthedev-hash/pqcota-common/blob/main/cmd/README.ko.md#pqcota-keygen)이 만들고, 짝이 되는 개인 키는 **노드의 수집기가** 씁니다. [자세히](https://github.com/randyinthedev-hash/pqcota/blob/main/docs/environment-variables.ko.md#키를-수집기-id에-묶기) |
+| `PQCOTA_REQUIRE_SIGNATURE` | `1`이면 확인할 키가 없을 때 **적재를 시작하지 않습니다.** 없으면 확인을 건너뛰지만 그 건수를 "서명 확인 안 함"으로 따로 보고합니다. 통과한 것과 같은 자리에 놓지 않습니다. 수집기 ID에 묶은 키를 쓰면 이 값과 상관없이 서명이 필수입니다 |
 | `PQCOTA_ORG` | 이 적재가 속한 조직입니다(소문자, 숫자, 하이픈, 2–64자). 없으면 `default`에 묶입니다. **저장소를 여는 모든 명령이 같은 값을 보아야 합니다.** 읽는 쪽과 쓰는 쪽이 다르면 데이터는 있는데 보이지 않습니다 |
 | `PQCOTA_REQUIRE_ORG` | `1`이면 조직 없이는 저장소를 열 수 없습니다. 이름으로 `default`도 쓸 수 없습니다(예약어입니다). 여러 조직이 저장소 하나를 나눠 쓰는 배포를 위한 것으로, 한번 섞이면 다시 나눌 수 없으므로 **여는 시점에** 막습니다 |
 | `PQCOTA_AUTO_DDL` | `0`이면 이력 스키마를 만들지 않습니다. 이력 스키마가 없으면 오류로 멈춥니다. 메타데이터와 프로비저닝 기록 테이블은 그래도 만듭니다. 연결이 엉뚱한 곳을 가리킬 때 새 빈 테이블을 만들어 거기에 쓰는 일을 막습니다 |

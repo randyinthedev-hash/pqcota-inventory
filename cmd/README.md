@@ -14,6 +14,7 @@ Gathering the files into that directory is **the user's** job. In the demo, Ansi
 
 ```
 pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
+pqcota-ingest -verify-keys <results-dir>
 ```
 
 | Argument · option | What it does |
@@ -21,12 +22,13 @@ pqcota-ingest [-scope-assets <csv>] <results-dir> [scope-master-file]
 | `<results-dir>` | reads every `*.json` (a single object) and `*.jsonl` (one line = one result). **The format is decided by the content, not the extension.** The jvm attach path emits several JVMs per node as JSONL. If even one input cannot be decoded, it **stops without loading.** If only half went in, a missing asset would be indistinguishable from an asset that does not exist |
 | `[scope-master-file]` | the node registration gate. If not given, the gate is skipped |
 | `-scope-assets <csv>` | asset scope: keeps only the assets to go on managing within the registered nodes (below) |
+| `-verify-keys` | a check for moving to collector-bound keys. It stores nothing and does not apply the registration gate. For each result it prints the collector ID, whether it is signed, the fingerprint of the key that matched and the verdict. Exit status 1 if any result would be refused. [The steps](https://github.com/randyinthedev-hash/pqcota/blob/main/docs/environment-variables.md#moving-an-existing-deployment-to-the-bound-form) |
 
 | Environment variable | What it does |
 |---|---|
 | `PQCOTA_DSN` | the Postgres connection string ([format](https://github.com/randyinthedev-hash/pqcota-discovery/blob/main/cmd/README.md#pqcota-hosts)). If absent there is only an in-memory summary: nothing is persisted |
-| `PQCOTA_VERIFY_KEY` | public keys (comma separated). If present it verifies the result signatures and refuses a mismatch. The key pair is made by [`pqcota-keygen`](https://github.com/randyinthedev-hash/pqcota-common/blob/main/cmd/README.md#pqcota-keygen), and the matching private key is used **by the collector on the node** |
-| `PQCOTA_REQUIRE_SIGNATURE` | if `1`, **loading does not start** when there is no key to verify with. If absent, verification is skipped but that count is reported separately as "signature unchecked". It is not put in the same place as a pass |
+| `PQCOTA_VERIFY_KEY` | the keys that verify result signatures. `<collector-id>:<public key>` entries (comma separated) check each result only against the keys of the collector it names, and **a signature is then always required**. Bare public keys are the legacy form: any listed key passes for any collector, with a warning. A wrong value stops the command with status 2 before any result is read. The key pair is made by [`pqcota-keygen`](https://github.com/randyinthedev-hash/pqcota-common/blob/main/cmd/README.md#pqcota-keygen), and the matching private key is used **by the collector on the node**. [Details](https://github.com/randyinthedev-hash/pqcota/blob/main/docs/environment-variables.md#binding-keys-to-collector-ids) |
+| `PQCOTA_REQUIRE_SIGNATURE` | if `1`, **loading does not start** when there is no key to verify with. If absent, verification is skipped but that count is reported separately as "signature unchecked". It is not put in the same place as a pass. With collector-bound keys a signature is required whatever this says |
 | `PQCOTA_ORG` | the organization this load belongs to (lowercase, digits and hyphens, 2–64 characters). If absent it is bound to `default`. **Every command that opens the store has to see the same value**: if the reading side and the writing side differ, the data is there but you cannot see it |
 | `PQCOTA_REQUIRE_ORG` | if `1`, the store cannot be opened without an organization. `default` cannot be used as a name either (it is reserved). For deployments where several organizations share one store: once mixed they cannot be separated again, so it is blocked **at the point of opening** |
 | `PQCOTA_AUTO_DDL` | if `0`, the history schema is not created; if it is absent, the command stops with an error. The metadata and provisioning-record tables are still created. It prevents a new empty table from being created and written to when the connection points at the wrong place |

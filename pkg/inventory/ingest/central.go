@@ -49,7 +49,7 @@ type RejectionStore interface {
 // [IngestResults]는 이것을 채워 [IngestWith]를 부르는 껍데기로 남는다.
 type IngestOptions struct {
 	Master         *scope.Master                            // nil이면 스코프 게이트 생략(로컬·데모)
-	VerifySig      func(*discoveryv1.CollectionResult) bool // nil이면 검증하지 않는다
+	VerifySig      func(*discoveryv1.CollectionResult) bool // nil이면 검증하지 않는다(기존 목록 모드)
 	SnapshotPrefix string
 	RulesetVersion string
 	Store          history.Store
@@ -61,6 +61,14 @@ type IngestOptions struct {
 	// 전제가 서지 않는 곳 — 여러 조직의 결과가 한 저장소로 모이는 곳 — 에서는 알리지 않고 통과하는
 	// 경로가 열려 있으면 안 된다.
 	RequireSignature bool
+
+	// VerifyCollector — 수집기 ID에 묶은 검증(ID 결합 모드, [sign.VerifyBound]). nil이 아니면 VerifySig 대신
+	// 이것을 쓰고, 통과하지 못하면 돌려준 사유로 거부한다.
+	//
+	// 이 모드에서는 **서명이 언제나 필수다.** RequireSignature와 상관없이 서명 없는 결과는 거부되고,
+	// 「검증하지 않고 받음」(Unverified)이 없다. 앱 선언도 갈라지기 전에 이 검증을 지난다 — 기존 목록
+	// 모드에서는 앱 선언이 서명을 보지 않는다(지금과 같다). 다른 키로 다시 시도하지 않는다.
+	VerifyCollector func(*discoveryv1.CollectionResult) error
 
 	// Rejections — 받지 않은 사실을 남길 곳. nil이면 [IngestReport]에만 남고 프로세스와 함께
 	// 사라진다(v0.1.x와 같은 동작).
@@ -94,15 +102,32 @@ func IngestResults(
 
 // IngestWith — [IngestResults]와 같은 일을 옵션 구조체로 받는다. 새 설정은 여기에만 붙는다.
 func IngestWith(results []*discoveryv1.CollectionResult, o IngestOptions) (*IngestReport, error) {
-	if o.RequireSignature && o.VerifySig == nil {
+	if o.VerifySig != nil && o.VerifyCollector != nil {
+		return nil, errors.New("both a key list and collector-bound keys were given — use one")
+	}
+	if o.RequireSignature && o.VerifySig == nil && o.VerifyCollector == nil {
 		return nil, ErrSignatureRequired
 	}
 	// 앱 선언은 **노드의 상태가 아니다** — 스냅샷 타임라인에 넣으면 조회·이력·diff가 저마다
 	// 그것을 걸러 내야 하고, 화면이 늘 때마다 같은 자리가 다시 샌다. 여기서 갈라낸다.
-	results, declared := splitAttributionDeclarations(results)
+	results, declaredRes := splitAttributionDeclarations(results)
 	master, verifySig, store := o.Master, o.VerifySig, o.Store
 	snapshotPrefix, rulesetVersion, assetPolicy := o.SnapshotPrefix, o.RulesetVersion, o.AssetPolicy
 	rep := &IngestReport{}
+	var declared []history.EdgeAttribution
+	for _, d := range declaredRes {
+		// ID 결합 모드에서는 선언도 서명을 지난다. 통과하지 못한 선언은 한 건도 쓰지 않는다.
+		if o.VerifyCollector != nil {
+			if err := o.VerifyCollector(d); err != nil {
+				node := d.GetEnvelope().GetTargetNodeId()
+				rep.Rejected++
+				rep.Notes = append(rep.Notes, node+": app declaration rejected — "+err.Error())
+				o.record(rep, d, node, history.RejectSignature, "app declaration: "+err.Error())
+				continue
+			}
+		}
+		declared = append(declared, attributionsOf(d)...)
+	}
 	if len(declared) > 0 {
 		as, ok := o.Store.(history.AttributionStore)
 		if !ok {
@@ -137,7 +162,15 @@ func IngestWith(results []*discoveryv1.CollectionResult, o IngestOptions) (*Inge
 			o.record(rep, res, node, history.RejectOffScope, "not registered → routed to a registration decision (§1.4)")
 			continue
 		}
-		if verifySig == nil {
+		if o.VerifyCollector != nil {
+			// ID 결합 모드: 그 collector_id에 등록된 키로만 본다. 서명이 없어도 거부한다(필수).
+			if err := o.VerifyCollector(res); err != nil {
+				rep.Rejected++
+				rep.Notes = append(rep.Notes, node+": signature rejected — "+err.Error())
+				o.record(rep, res, node, history.RejectSignature, err.Error())
+				continue
+			}
+		} else if verifySig == nil {
 			// 검증하지 않았다는 사실을 센다. 통과와 같은 자리에 두지 않는다.
 			rep.Unverified++
 			o.record(rep, res, node, history.RejectUnverified, "no public key to verify with — the signature was not checked")
@@ -175,9 +208,7 @@ func IngestWith(results []*discoveryv1.CollectionResult, o IngestOptions) (*Inge
 //
 // 판정은 내용으로 한다: 자산(CBOM)이 없고, 엣지가 전부 선언 표시를 달고 있으면 선언이다.
 // 관측 결과는 어느 쪽이든 관측한 것을 담고 있으므로 여기 걸리지 않는다.
-func splitAttributionDeclarations(in []*discoveryv1.CollectionResult) ([]*discoveryv1.CollectionResult, []history.EdgeAttribution) {
-	var keep []*discoveryv1.CollectionResult
-	var out []history.EdgeAttribution
+func splitAttributionDeclarations(in []*discoveryv1.CollectionResult) (keep, declared []*discoveryv1.CollectionResult) {
 	for _, r := range in {
 		edges := r.GetObservedEdges()
 		if len(r.GetCbomCyclonedx()) > 0 || len(edges) == 0 {
@@ -195,13 +226,20 @@ func splitAttributionDeclarations(in []*discoveryv1.CollectionResult) ([]*discov
 			keep = append(keep, r)
 			continue
 		}
-		for _, e := range edges {
-			out = append(out, history.EdgeAttribution{
-				NodeID: e.GetSrcNodeId(), Dst: e.GetDstAddr(), AppKey: e.GetAppKey(),
-			})
-		}
+		declared = append(declared, r)
 	}
-	return keep, out
+	return keep, declared
+}
+
+// attributionsOf — 앱 선언 결과 하나의 엣지들을 선언 기록으로 옮긴다.
+func attributionsOf(r *discoveryv1.CollectionResult) []history.EdgeAttribution {
+	var out []history.EdgeAttribution
+	for _, e := range r.GetObservedEdges() {
+		out = append(out, history.EdgeAttribution{
+			NodeID: e.GetSrcNodeId(), Dst: e.GetDstAddr(), AppKey: e.GetAppKey(),
+		})
+	}
+	return out
 }
 
 // declaredKind — declaration.KindDeclared와 같은 값. 이 패키지가 declaration을 import하면
