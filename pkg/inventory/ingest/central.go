@@ -140,7 +140,23 @@ func IngestWith(results []*discoveryv1.CollectionResult, o IngestOptions) (*Inge
 		}
 		rep.DeclaredAttributions = len(declared)
 	}
-	rep.Conflicts = CheckIdentity(results) // 사용자 node_id 입력의 중복/충돌을 지문으로 교차검증(§1.4)
+	// ID 결합 모드에서는 서명을 먼저 판정해 두고, **통과한 결과만** 노드 식별 검사에 넣는다. 거부될 결과가 정상
+	// 결과와 함께 node_id 충돌을 만들면, 받지 않은 주장이 이력에 식별 충돌로 남는다. 판정은 한 번만 하고 아래 루프가
+	// 그 값을 쓴다(거부 기록의 자리와 순서는 그대로: 노드 등재 게이트 다음).
+	var boundErr map[*discoveryv1.CollectionResult]error
+	identityInput := results
+	if o.VerifyCollector != nil {
+		boundErr = make(map[*discoveryv1.CollectionResult]error, len(results))
+		identityInput = nil
+		for _, res := range results {
+			if err := o.VerifyCollector(res); err != nil {
+				boundErr[res] = err
+				continue
+			}
+			identityInput = append(identityInput, res)
+		}
+	}
+	rep.Conflicts = CheckIdentity(identityInput) // 사용자 node_id 입력의 중복/충돌을 지문으로 교차검증(§1.4)
 	for _, c := range rep.Conflicts {
 		o.record(rep, nil, c.Key, history.RejectIdentity,
 			c.Kind+": "+c.Key+" ↔ "+strings.Join(c.Members, ", "))
@@ -164,7 +180,7 @@ func IngestWith(results []*discoveryv1.CollectionResult, o IngestOptions) (*Inge
 		}
 		if o.VerifyCollector != nil {
 			// ID 결합 모드: 그 collector_id에 등록된 키로만 본다. 서명이 없어도 거부한다(필수).
-			if err := o.VerifyCollector(res); err != nil {
+			if err := boundErr[res]; err != nil {
 				rep.Rejected++
 				rep.Notes = append(rep.Notes, node+": signature rejected — "+err.Error())
 				o.record(rep, res, node, history.RejectSignature, err.Error())

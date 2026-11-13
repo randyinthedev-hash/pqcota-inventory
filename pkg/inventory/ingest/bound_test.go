@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	commonv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/common/v1"
 	discoveryv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/discovery/v1"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/sign"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/declaration"
@@ -252,5 +253,37 @@ func TestBothVerifiersRefused(t *testing.T) {
 	o.VerifySig = func(*discoveryv1.CollectionResult) bool { return true }
 	if _, err := ingest.IngestWith([]*discoveryv1.CollectionResult{res("web-01")}, o); err == nil {
 		t.Error("both verifiers were accepted")
+	}
+}
+
+// 결합 모드에서는 서명 검증을 통과한 결과만 노드 식별 검사에 넣는다. 정상 결과와, 같은 노드 ID에 다른 머신 지문을
+// 담았지만 서명이 거부되는 결과를 한 번에 적재한다. 정상 결과는 저장되고, 거부된 결과에는 서명 거부 기록만 남고,
+// 노드 식별 충돌은 없다.
+func TestBoundRejectedResultMakesNoIdentityConflict(t *testing.T) {
+	k, kPriv, _ := sign.Generate()
+	_, otherPriv, _ := sign.Generate()
+	keys := map[string][]string{"openssl-collector": {k}}
+
+	good := opensslResult("web-01", "libssl.so.3")
+	good.Envelope.Machine = &commonv1.MachineIdentity{MachineId: "machine-a"}
+	signAs(t, good, "openssl-collector", kPriv)
+	forged := opensslResult("web-01", "libssl.so.3")
+	forged.Envelope.Machine = &commonv1.MachineIdentity{MachineId: "machine-b"}
+	signAs(t, forged, "openssl-collector", otherPriv)
+
+	store := history.NewMemStore()
+	rep, err := ingest.IngestWith([]*discoveryv1.CollectionResult{good, forged}, boundOpts(store, keys))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Accepted != 1 || rep.Rejected != 1 || snapshots(t, store, "web-01") != 1 {
+		t.Errorf("the good result was not stored alone: %+v", rep)
+	}
+	if len(rep.Conflicts) != 0 {
+		t.Errorf("a rejected result made an identity conflict: %+v", rep.Conflicts)
+	}
+	rs, _ := store.Rejections(0)
+	if len(rs) != 1 || rs[0].Kind != history.RejectSignature {
+		t.Errorf("rejections: %+v", rs)
 	}
 }
