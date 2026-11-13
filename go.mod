@@ -4,7 +4,7 @@ go 1.26.4
 
 toolchain go1.26.11
 
-require github.com/randyinthedev-hash/pqcota-common v0.14.0
+require github.com/randyinthedev-hash/pqcota-common v0.15.0
 
 require (
 	github.com/jackc/pgx/v5 v5.10.0
