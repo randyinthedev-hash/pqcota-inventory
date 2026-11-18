@@ -24,6 +24,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -168,16 +169,21 @@ func initialize(dsn string) int {
 		return 1
 	}
 	defer pool.Close()
-	rep, err := pgschema.Init(ctx, pool, history.Schema(), inventory.MetaSchema(), sestore.Schema())
+	return runInit(ctx, pool, os.Stdout, os.Stderr)
+}
+
+// runInit — 연결을 받아 초기화하고 출력한다(시험이 연결을 바꿔 끼운다).
+func runInit(ctx context.Context, c pgschema.Conn, stdout, stderr io.Writer) int {
+	rep, err := pgschema.Init(ctx, c, history.Schema(), inventory.MetaSchema(), sestore.Schema())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "initializing the schema failed:", err)
+		fmt.Fprintln(stderr, "initializing the schema failed:", err)
 		if pgschema.IsPrivilegeError(err) {
-			fmt.Fprintln(os.Stderr, "(this account may not own the existing pqcota tables, or lacks USAGE/CREATE on the schema. "+
+			fmt.Fprintln(stderr, "(this account may not own the existing pqcota tables, or lacks USAGE/CREATE on the schema. "+
 				"Run -init-schema as the role that owns them, or move their ownership to the schema role first: "+
 				"https://github.com/randyinthedev-hash/pqcota-inventory/blob/main/cmd/README.md#setting-up-the-database)")
 		}
 		return 1
 	}
-	fmt.Print(pgschema.FormatReport(rep))
+	fmt.Fprint(stdout, pgschema.FormatReport(rep))
 	return 0
 }

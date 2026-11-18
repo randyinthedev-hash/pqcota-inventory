@@ -6,19 +6,20 @@
 
 ## 데이터베이스 준비
 
-테이블는 **다른 명령이 데이터베이스를 쓰기 전에 한 번, 그리고 판을 올릴 때마다** 만듭니다.
+테이블은 **다른 명령이 데이터베이스를 쓰기 전에 한 번, 그리고 판을 올릴 때마다** 만듭니다.
 
 ```bash
 PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-inventory -init-schema
 PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-records -init-schema
 ```
 
-- `pqcota-inventory -init-schema`는 인벤토리의 테이블(이력, 머신 메타데이터, 소스 근거)를 만듭니다. [`pqcota-records -init-schema`](https://github.com/randyinthedev-hash/pqcota-provisioning/blob/main/cmd/README.ko.md#pqcota-records)는 프로비저닝 기록 테이블를 만듭니다.
-- 둘 다 **한 트랜잭션**으로 돕니다. 어느 단계든 실패하면 아무것도 바뀌지 않고 종료 상태 1로 끝납니다. 마지막 줄 `schema ready: …`는 모든 테이블를 만들고 확인한 뒤에만 나옵니다.
-- 다시 실행하면 있던 테이블와 데이터는 그대로 두고, 새 판에 필요한 것만 더합니다.
+- `pqcota-inventory -init-schema`는 인벤토리의 테이블(이력, 머신 메타데이터, 소스 근거)을 만듭니다. [`pqcota-records -init-schema`](https://github.com/randyinthedev-hash/pqcota-provisioning/blob/main/cmd/README.ko.md#pqcota-records)는 프로비저닝 기록 테이블을 만듭니다.
+- 둘 다 **한 트랜잭션**으로 돕니다. 어느 단계든 실패하면 아무것도 바뀌지 않고 종료 상태 1로 끝납니다. 마지막 줄 `schema ready: …`는 모든 테이블을 만들고 확인한 뒤에만 나옵니다.
+- 변경을 커밋하는 도중 연결이 끊기면 변경이 반영됐는지 알 수 없습니다. 그렇게 알리고 종료 상태 1로 끝납니다. 연결을 복구한 뒤 다시 실행합니다. 다시 실행해도 문제없습니다.
+- 다시 실행하면 있던 테이블과 데이터는 그대로 두고, 새 판에 필요한 것만 더합니다.
 - `PQCOTA_AUTO_DDL`은 보지 않습니다. `PQCOTA_DSN` 없이 실행하거나 조회 옵션·인자와 함께 쓰면, 접속하지 않고 종료 상태 2로 거부합니다.
 
-**조회 명령은 테이블를 만들지 않습니다**(`pqcota-inventory`, `pqcota-source-evidence`, `pqcota-records`). 표나 열이 없으면 멈추고 `-init-schema`를 실행하라고 안내합니다. 계정에 권한이 없으면 어느 권한인지 알려 주고, 초기화를 권하지 않습니다.
+**조회 명령은 테이블을 만들지 않습니다**(`pqcota-inventory`, `pqcota-source-evidence`, `pqcota-records`). 테이블이나 열이 없으면 멈추고 `-init-schema`를 실행하라고 안내합니다. 계정에 권한이 없으면 어느 권한인지 알려 주고, 초기화를 권하지 않습니다.
 
 권한은 **세 역할**로 나눕니다. 이름은 예입니다.
 
@@ -30,27 +31,27 @@ PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-records -ini
 
 `pqcota_write`에는 `PQCOTA_AUTO_DDL=0`을 설정합니다. 설정하지 않으면 쓰는 명령이 저장소를 열 때마다 스키마 문을 직접 실행하는데, 그것은 테이블의 소유자만 할 수 있습니다.
 
-권한은 두 번에 나눠 줍니다. `GRANT … ON ALL TABLES`는 지금 있는 표에 적용되고, `ALTER DEFAULT PRIVILEGES`는 그 역할이 나중에 만드는 표에 적용됩니다. 테이블가 이미 있는 데이터베이스에는 앞의 것이 필요합니다. 뒤의 것만으로는 이미 있는 표에 권한이 생기지 않습니다.
+권한은 두 번에 나눠 줍니다. `GRANT … ON ALL TABLES`는 지금 있는 표에 적용되고, `ALTER DEFAULT PRIVILEGES`는 그 역할이 나중에 만드는 표에 적용됩니다. 테이블이 이미 있는 데이터베이스에는 앞의 것이 필요합니다. 뒤의 것만으로는 이미 있는 표에 권한이 생기지 않습니다.
 
 ```sql
 GRANT USAGE, CREATE ON SCHEMA public TO pqcota_schema;
 GRANT USAGE ON SCHEMA public TO pqcota_write, pqcota_read;
--- 지금 있는 테이블와 시퀀스(초기화한 뒤, 그리고 기존 설치를 옮길 때)
+-- 지금 있는 테이블과 시퀀스(초기화한 뒤, 그리고 기존 설치를 옮길 때)
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO pqcota_write;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO pqcota_write;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO pqcota_read;
--- 앞으로 pqcota_schema가 만드는 테이블와 시퀀스
+-- 앞으로 pqcota_schema가 만드는 테이블과 시퀀스
 ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pqcota_write;
 ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT USAGE ON SEQUENCES TO pqcota_write;
 ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT SELECT ON TABLES TO pqcota_read;
 ```
 
-**pqcota 테이블가 이미 있는 데이터베이스.** 테이블는 그 소유자만 바꿀 수 있습니다. 그래서 새 역할로 `-init-schema`를 실행하면, 스키마의 `CREATE`가 있어도 `must be owner of table …`로 실패합니다. 바뀌는 것은 없습니다. 둘 중 하나를 고릅니다.
+**pqcota 테이블이 이미 있는 데이터베이스.** 테이블은 그 소유자만 바꿀 수 있습니다. 그래서 새 역할로 `-init-schema`를 실행하면, 스키마의 `CREATE`가 있어도 `must be owner of table …`로 실패합니다. 바뀌는 것은 없습니다. 둘 중 하나를 고릅니다.
 
-- **지금 소유자로 초기화합니다.** 테이블를 만든 역할을 스키마 역할로 씁니다. 한 역할이 테이블를 모두 가졌을 때만 됩니다.
-- **소유권을 스키마 역할로 옮깁니다.** 각 테이블의 소유자(또는 슈퍼유저)가 `ALTER TABLE <표> OWNER TO pqcota_schema`를 실행합니다. 실행하는 쪽은 `pqcota_schema`의 구성원이어야 합니다. 테이블의 시퀀스와 인덱스는 테이블를 따라 옮겨집니다. `REASSIGN OWNED BY <옛 역할> TO pqcota_schema`는 그 역할이 데이터베이스에서 가진 것을 pqcota 테이블가 아닌 것까지 모두 옮기므로, pqcota만 쓰는 데이터베이스에서만 씁니다.
+- **지금 소유자로 초기화합니다.** 테이블을 만든 역할을 스키마 역할로 씁니다. 한 역할이 테이블을 모두 가졌을 때만 됩니다.
+- **소유권을 스키마 역할로 옮깁니다.** 각 테이블의 소유자(또는 슈퍼유저)가 `ALTER TABLE <표> OWNER TO pqcota_schema`를 실행합니다. 실행하는 쪽은 `pqcota_schema`의 구성원이어야 합니다. 테이블의 시퀀스와 인덱스는 테이블을 따라 옮겨집니다. `REASSIGN OWNED BY <옛 역할> TO pqcota_schema`는 그 역할이 데이터베이스에서 가진 것을 pqcota 테이블이 아닌 것까지 모두 옮기므로, pqcota만 쓰는 데이터베이스에서만 씁니다.
 
-누가 어느 테이블를 가졌는지는 `SELECT tablename, tableowner FROM pg_tables WHERE tablename LIKE 'pqcota\_%';`로 봅니다. 옮긴 뒤에는 위의 `GRANT … ON ALL …` 줄을 실행하고 `-init-schema`를 한 번 실행합니다.
+누가 어느 테이블을 가졌는지는 `SELECT tablename, tableowner FROM pg_tables WHERE tablename LIKE 'pqcota\_%';`로 봅니다. 옮긴 뒤에는 위의 `GRANT … ON ALL …` 줄을 실행하고 `-init-schema`를 한 번 실행합니다.
 
 ## ① 적재: 가져온 결과를 이력에 쌓기
 

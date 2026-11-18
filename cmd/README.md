@@ -15,6 +15,7 @@ PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-records -ini
 
 - `pqcota-inventory -init-schema` creates the inventory tables (history, machine metadata, source evidence). [`pqcota-records -init-schema`](https://github.com/randyinthedev-hash/pqcota-provisioning/blob/main/cmd/README.md#pqcota-records) creates the provisioning-record table.
 - Each runs in **one transaction**. If any step fails, nothing is changed and it exits with status 1. The last line, `schema ready: …`, is printed only after everything was created and checked.
+- If the connection is lost while the change is being committed, it cannot tell whether the change was made. It says so and exits with status 1. Restore the connection and run it again; running it again is safe.
 - Running it again leaves existing tables and data as they are and adds what a newer version needs.
 - It does not read `PQCOTA_AUTO_DDL`. Without `PQCOTA_DSN`, or together with a query option or an argument, it refuses with status 2 and does not connect.
 

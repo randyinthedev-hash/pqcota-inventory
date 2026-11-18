@@ -105,6 +105,11 @@ func Parse(sql string) []Table {
 // ErrRolledBack — 초기화가 커밋 전에 실패해 되돌려졌다. 데이터베이스는 실행 전과 같다.
 var ErrRolledBack = errors.New("rolled back, nothing was changed")
 
+// ErrCommitUnknown — 커밋을 보냈는데 결과를 받지 못했다(연결이 끊기는 등). 서버가 커밋했을 수도, 안 했을 수도 있다.
+// 「아무것도 바뀌지 않았다」고 말하면 틀릴 수 있으므로 ErrRolledBack과 가른다. 초기화는 멱등이라 다시 돌리면 된다.
+var ErrCommitUnknown = errors.New("could not confirm whether the schema changes were committed; " +
+	"restore the connection and run -init-schema again (running it again is safe)")
+
 // Querier — *pgxpool.Pool, *pgx.Conn, pgx.Tx 모두 된다.
 type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -290,7 +295,13 @@ SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Report{}, fmt.Errorf("commit: %w (%w)", err, ErrRolledBack)
+		// 서버가 COMMIT에 오류로 답했으면(PgError, 또는 이미 실패한 트랜잭션이라 pgx가 롤백으로 끝냈으면) 되돌려진 것이다.
+		// 그 밖의 오류(연결 끊김·시간 초과)는 서버가 커밋한 뒤에 났을 수 있다 — 결과를 모른다고 말한다.
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) || errors.Is(err, pgx.ErrTxCommitRollback) {
+			return Report{}, fmt.Errorf("commit: %w (%w)", err, ErrRolledBack)
+		}
+		return Report{}, fmt.Errorf("commit: %w (%w)", err, ErrCommitUnknown)
 	}
 	if err := Check(ctx, c, all, ""); err != nil {
 		return Report{}, fmt.Errorf("after initializing: %w", err)

@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -14,6 +16,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/pgschema/pgschematest"
 )
 
 // 시험 실행 파일이 자기 자신을 이 명령으로 다시 띄운다. 종료 코드와 출력을 그대로 잰다.
@@ -130,5 +134,18 @@ func TestQueryOnEmptyDatabaseThenInit(t *testing.T) {
 	code, out, errOut = runInventory(t, scoped)
 	if code != 0 || !strings.Contains(out, "0 nodes") {
 		t.Fatalf("query after init: exit %d, %q %q", code, out, errOut)
+	}
+}
+
+// 커밋 결과를 받지 못하면 성공 줄 없이 종료 1이고, 연결을 복구해 다시 돌리라고 안내한다.
+func TestInitCommitUnknownPrintsNoSuccess(t *testing.T) {
+	c := &pgschematest.Conn{CommitErr: fmt.Errorf("conn closed: %w", io.ErrUnexpectedEOF)}
+	var o, e strings.Builder
+	code := runInit(context.Background(), c, &o, &e)
+	if code != 1 || o.Len() != 0 {
+		t.Fatalf("exit %d, stdout %q", code, o.String())
+	}
+	if !strings.Contains(e.String(), "restore the connection and run -init-schema again") || strings.Contains(e.String(), "nothing was changed") {
+		t.Fatalf("stderr: %q", e.String())
 	}
 }
