@@ -201,9 +201,13 @@ func RenderDetailWith(snap *history.Snapshot, overlay *AttributionOverlay) strin
 		if kind == declaration.KindDeclared {
 			declared++
 		}
-		fmt.Fprintf(&b, "  %s → %-22s %-5s %-38s %s%s\n",
-			e.GetSrcNodeId(), edgeDst(e), short(e.GetProtocol().String(), "NETWORK_PROTOCOL_"),
+		fmt.Fprintf(&b, "  %s %s %-22s %-5s %-38s %s%s\n",
+			e.GetSrcNodeId(), edgeArrow(e), edgePeer(e), short(e.GetProtocol().String(), "NETWORK_PROTOCOL_"),
 			edgeAlgo(e), postureMark(e), appMark(key, kind))
+		// 같은 앱 키로 관측된 라이브러리. 그 연결이 그 라이브러리를 썼다는 근거는 아니다(판정하지 않는다).
+		if libs := sameAppAssets(e, snap.Findings); len(libs) > 0 {
+			fmt.Fprintf(&b, "      same app key in this snapshot: %s (not evidence that this connection used it)\n", strings.Join(libs, ", "))
+		}
 	}
 	if declared > 0 {
 		// 몇 개가 선언으로 메워졌는지 밝힌다 — 화면만 보면 관측과 구별되지 않는다.
@@ -325,7 +329,7 @@ func edgeLine(e *discoveryv1.ObservedEdge) string {
 	if e.GetAppKey() == "" {
 		app = "  (app not identified)"
 	}
-	return fmt.Sprintf("%s → %s %s %s%s", e.GetSrcNodeId(), edgeDst(e),
+	return fmt.Sprintf("%s %s %s %s %s%s", e.GetSrcNodeId(), edgeArrow(e), edgePeer(e),
 		short(e.GetProtocol().String(), "NETWORK_PROTOCOL_"), edgeAlgo(e), app)
 }
 

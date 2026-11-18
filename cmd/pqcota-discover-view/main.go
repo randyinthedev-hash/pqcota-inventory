@@ -123,8 +123,8 @@ func describeFinding(f *discoveryv1.Finding) string {
 
 func printEdges(edges []*discoveryv1.ObservedEdge, ip2node map[string]string) (pqc, classical, unknown int) {
 	type row struct {
-		src, dst, proto, grp string
-		p                    discoveryv1.QuantumPosture
+		src, dst, proto, grp, arrow string
+		p                           discoveryv1.QuantumPosture
 	}
 	var rows []row
 	for _, e := range edges {
@@ -142,7 +142,7 @@ func printEdges(edges []*discoveryv1.ObservedEdge, ip2node map[string]string) (p
 		if grp == "" {
 			grp = "(unknown)"
 		}
-		rows = append(rows, row{e.GetSrcNodeId(), dst, protoName(e.GetProtocol()), grp, p})
+		rows = append(rows, row{e.GetSrcNodeId(), dst, protoName(e.GetProtocol()), grp, roleArrow(e), p})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].src != rows[j].src {
@@ -155,7 +155,7 @@ func printEdges(edges []*discoveryv1.ObservedEdge, ip2node map[string]string) (p
 		if lbl := posture.GradeLabel(posture.Grade(r.grp)); lbl != "" {
 			grp = fmt.Sprintf("%s [%s]", r.grp, lbl) // PQC 그룹엔 성숙도(표준/초안/실험/취약) 병기
 		}
-		fmt.Printf("  %s %-10s → %-18s %-5s %s\n", posture.Symbol(r.p), r.src, r.dst, r.proto, grp)
+		fmt.Printf("  %s %-10s %s %-18s %-5s %s\n", posture.Symbol(r.p), r.src, r.arrow, r.dst, r.proto, grp)
 	}
 	return
 }
@@ -170,7 +170,7 @@ func renderObservedDOT(edges []*discoveryv1.ObservedEdge, ip2node map[string]str
 	seen := map[string]bool{}
 	for _, e := range edges {
 		dst := resolveDst(e, ip2node)
-		key := e.GetSrcNodeId() + "|" + dst + "|" + protoName(e.GetProtocol())
+		key := e.GetSrcNodeId() + "|" + dst + "|" + protoName(e.GetProtocol()) + "|" + e.GetRole().String()
 		if seen[key] {
 			continue
 		}
@@ -188,7 +188,16 @@ func renderObservedDOT(edges []*discoveryv1.ObservedEdge, ip2node map[string]str
 			grp = grp + " (" + lbl + ")" // 표준/실험 성숙도를 그래프 라벨에도
 		}
 		label := fmt.Sprintf("%s %s %s", posture.Symbol(p), protoName(e.GetProtocol()), grp)
-		b.WriteString(fmt.Sprintf("  %q -> %q [label=%q, color=%q, penwidth=2];\n", e.GetSrcNodeId(), dst, label, color))
+		// 화살표는 개시자 → 수신자. 서버 기록은 상대(클라이언트)에서 관측 노드로, 역할 미확인은 방향 없이 점선으로.
+		from, to, extra := e.GetSrcNodeId(), dst, ""
+		switch e.GetRole() {
+		case discoveryv1.EdgeRole_EDGE_ROLE_SERVER:
+			from, to = dst, e.GetSrcNodeId()
+		case discoveryv1.EdgeRole_EDGE_ROLE_CLIENT:
+		default:
+			extra = ", dir=none, style=dashed"
+		}
+		b.WriteString(fmt.Sprintf("  %q -> %q [label=%q, color=%q, penwidth=2%s];\n", from, to, label, color, extra))
 	}
 	b.WriteString("}\n")
 	return b.String()
@@ -305,4 +314,15 @@ func nz(s string) string {
 		return "unknown"
 	}
 	return s
+}
+
+// roleArrow — 관측 노드에서 본 방향. 서버 기록(관측 노드가 받음)은 ←, 역할 미확인은 ↔.
+func roleArrow(e *discoveryv1.ObservedEdge) string {
+	switch e.GetRole() {
+	case discoveryv1.EdgeRole_EDGE_ROLE_CLIENT:
+		return "→"
+	case discoveryv1.EdgeRole_EDGE_ROLE_SERVER:
+		return "←"
+	}
+	return "↔"
 }

@@ -43,9 +43,9 @@ func observed(t *testing.T) *history.Snapshot {
 		Completeness: &commonv1.Completeness{Note: "1 of 2 edges could not be attributed to an app"},
 		Edges: []*discoveryv1.ObservedEdge{
 			// 관측이 이미 잡은 것
-			{SrcNodeId: "web-01", DstAddr: "10.0.0.5", Port: 443, AppKey: "payment.service", AppKeyKind: "systemd-unit"},
+			{SrcNodeId: "web-01", DstAddr: "10.0.0.5", Port: 443, Role: discoveryv1.EdgeRole_EDGE_ROLE_CLIENT, AppKey: "payment.service", AppKeyKind: "systemd-unit"},
 			// 못 잡은 것 — 선언이 메울 자리
-			{SrcNodeId: "web-01", DstAddr: "10.0.0.7", Port: 22},
+			{SrcNodeId: "web-01", DstAddr: "10.0.0.7", Port: 22, Role: discoveryv1.EdgeRole_EDGE_ROLE_CLIENT},
 		},
 	}
 }

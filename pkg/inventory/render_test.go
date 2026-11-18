@@ -105,7 +105,7 @@ func TestRenderDiffWarnsOnRulesetChange(t *testing.T) {
 // 앱 키 2단계: diff가 엣지를 엣지 id로 맞대어 사라짐·추가·횟수 변경을 적는다.
 func TestRenderDiffEdges(t *testing.T) {
 	edge := func(app, kind string, n uint64) *discoveryv1.ObservedEdge {
-		return &discoveryv1.ObservedEdge{SrcNodeId: "appkey-node", DstAddr: "172.20.0.2:4433", Port: 4433,
+		return &discoveryv1.ObservedEdge{SrcNodeId: "appkey-node", DstAddr: "172.20.0.2:4433", Port: 4433, Role: discoveryv1.EdgeRole_EDGE_ROLE_CLIENT,
 			Protocol: discoveryv1.NetworkProtocol_NETWORK_PROTOCOL_TLS, NegotiatedGroup: "secp256r1",
 			AppKey: app, AppKeyKind: kind, ObservedCount: n}
 	}

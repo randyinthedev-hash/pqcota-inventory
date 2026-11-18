@@ -56,6 +56,8 @@ func RenderStore(store history.Store, meta MetaStore) (string, error) {
 	}
 	fmt.Fprintf(&b, "── totals: %d assets · %d observed edges (🟢 PQC %d · 🔴 classical %d · ⚪ unknown %d) ──\n",
 		totalAssets, len(edges), pqc, classical, unknown)
+	// 서버 쪽을 관측하면 같은 연결이 양쪽에 한 번씩 세어진다. 역할별로 나눠 보인다(클라이언트만 있으면 이 줄은 없다).
+	b.WriteString(roleLine(edges))
 	return b.String(), nil
 }
 

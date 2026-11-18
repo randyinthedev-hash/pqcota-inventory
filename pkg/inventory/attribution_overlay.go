@@ -51,6 +51,11 @@ func (o *AttributionOverlay) Apply(e *discoveryv1.ObservedEdge) (key, kind strin
 	if o == nil {
 		return "", ""
 	}
+	// 선언은 클라이언트 기록에만 얹는다. 선언의 dst는 서버 주소인데, 서버 기록의 dst는 클라이언트 ip라 뜻이 다르다.
+	// 역할을 확인하지 못한 기록에도 얹지 않는다(어느 쪽 주소인지 모른다).
+	if e.GetRole() != discoveryv1.EdgeRole_EDGE_ROLE_CLIENT {
+		return "", ""
+	}
 	if k, ok := o.byEdge[edgeKey{e.GetSrcNodeId(), edgeDstKey(e)}]; ok {
 		return k, declaration.KindDeclared
 	}
