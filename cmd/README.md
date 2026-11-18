@@ -4,6 +4,54 @@ English · [한국어](README.ko.md)
 
 The CLIs (Go binaries) of the inventory stage. They **load into the center** what the collectors observed, and **read back**, read-only, what has accumulated. They are sorted into five categories.
 
+## Setting up the database
+
+Create the tables **once, before anything else uses the database, and again after every upgrade**:
+
+```bash
+PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-inventory -init-schema
+PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-records -init-schema
+```
+
+- `pqcota-inventory -init-schema` creates the inventory tables (history, machine metadata, source evidence). [`pqcota-records -init-schema`](https://github.com/randyinthedev-hash/pqcota-provisioning/blob/main/cmd/README.md#pqcota-records) creates the provisioning-record table.
+- Each runs in **one transaction**. If any step fails, nothing is changed and it exits with status 1. The last line, `schema ready: …`, is printed only after everything was created and checked.
+- Running it again leaves existing tables and data as they are and adds what a newer version needs.
+- It does not read `PQCOTA_AUTO_DDL`. Without `PQCOTA_DSN`, or together with a query option or an argument, it refuses with status 2 and does not connect.
+
+**The query commands never create tables** (`pqcota-inventory`, `pqcota-source-evidence`, `pqcota-records`). If a table or a column is missing, they stop and ask you to run `-init-schema`. If the account lacks a privilege, they name it and do not suggest initializing.
+
+**Three roles** keep the privileges apart. The names are examples.
+
+| Role | Privileges | Runs |
+|---|---|---|
+| `pqcota_schema` | `USAGE` and `CREATE` on the schema. It becomes the owner of the tables | `-init-schema` |
+| `pqcota_write` | `USAGE` on the schema; `SELECT`, `INSERT`, `UPDATE`, `DELETE` on the tables; `USAGE` on the sequences | the loading and recording commands (`pqcota-ingest`, `pqcota-cbom-ingest`, `pqcota-prune`, `pqcota-hosts`, `pqcota-profile`, `pqcota-provision`), with `PQCOTA_AUTO_DDL=0` |
+| `pqcota_read` | `USAGE` on the schema; `SELECT` on the tables | the query commands, `pqcota-approve` |
+
+Set `PQCOTA_AUTO_DDL=0` for `pqcota_write`. Without it, the writing commands run the schema statements themselves each time they open the store, and only the owner of the tables may do that.
+
+Privileges are granted twice. `GRANT … ON ALL TABLES` covers the tables that exist now; `ALTER DEFAULT PRIVILEGES` covers the tables that role creates later. A database that already has tables needs the first; the second alone grants nothing on them.
+
+```sql
+GRANT USAGE, CREATE ON SCHEMA public TO pqcota_schema;
+GRANT USAGE ON SCHEMA public TO pqcota_write, pqcota_read;
+-- the tables and sequences that exist now (after initializing, and when moving an existing installation)
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO pqcota_write;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO pqcota_write;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO pqcota_read;
+-- the tables and sequences pqcota_schema creates from now on
+ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pqcota_write;
+ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT USAGE ON SEQUENCES TO pqcota_write;
+ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT SELECT ON TABLES TO pqcota_read;
+```
+
+**A database that already has pqcota tables.** Only the owner of a table may change it, so `-init-schema` run by a new role fails with `must be owner of table …`, even with `CREATE` on the schema. Nothing is changed. Choose one:
+
+- **Initialize as the current owner.** Use the role that created the tables as the schema role. This works only if one role owns them all.
+- **Move the ownership to the schema role.** The owner of each table (or a superuser) runs `ALTER TABLE <table> OWNER TO pqcota_schema`; the one who runs it must be a member of `pqcota_schema`. The sequences and indexes of a table move with it. `REASSIGN OWNED BY <old role> TO pqcota_schema` moves everything that role owns in the database, not only pqcota's tables, so use it only on a database used by pqcota alone.
+
+To see who owns what: `SELECT tablename, tableowner FROM pg_tables WHERE tablename LIKE 'pqcota\_%';`. After moving, run the `GRANT … ON ALL …` lines above and `-init-schema` once.
+
 ## ① Loading: accumulate the retrieved results into the history
 
 **`pqcota-ingest` reads from one directory** the `CollectionResult` JSON files the collectors produced, and loads them through the scope gate → normalization → the append-only history. This is what makes the data the query commands below read.
@@ -31,7 +79,7 @@ pqcota-ingest -verify-keys <results-dir>
 | `PQCOTA_REQUIRE_SIGNATURE` | if `1`, **loading does not start** when there is no key to verify with. If absent, verification is skipped but that count is reported separately as "signature unchecked". It is not put in the same place as a pass. With collector-bound keys a signature is required whatever this says |
 | `PQCOTA_ORG` | the organization this load belongs to (lowercase, digits and hyphens, 2–64 characters). If absent it is bound to `default`. **Every command that opens the store has to see the same value**: if the reading side and the writing side differ, the data is there but you cannot see it |
 | `PQCOTA_REQUIRE_ORG` | if `1`, the store cannot be opened without an organization. `default` cannot be used as a name either (it is reserved). For deployments where several organizations share one store: once mixed they cannot be separated again, so it is blocked **at the point of opening** |
-| `PQCOTA_AUTO_DDL` | if `0`, the history schema is not created; if it is absent, the command stops with an error. The metadata and provisioning-record tables are still created. It prevents a new empty table from being created and written to when the connection points at the wrong place |
+| `PQCOTA_AUTO_DDL` | if `0`, the writing commands neither create nor change tables, and a missing table or column stops them with an error. It covers the history, metadata, source-evidence and provisioning-record tables. It prevents a new empty table from being created and written to when the connection points at the wrong place. The tables are created with [`-init-schema`](#setting-up-the-database) |
 
 > **If `PQCOTA_DSN` is given but the store cannot be opened, it stops.** v0.1.x fell back to in-memory and carried on,
 > and then the screen printed success while the data vanished with the process. Giving a DSN is a request for persistence.
@@ -273,6 +321,7 @@ It prints the discovered assets (OpenSSL, JCA) and the grade of each observed co
 
 ```
 pqcota-inventory [-history <node>] [-snapshot <id>] [-diff <past-id>,<latest-id>]
+pqcota-inventory -init-schema
 ```
 
 Run with no arguments it prints **the latest snapshot of every node + a grade tally**. The `▸` machine header (endpoint and profile) and `@` app labels (a shared `.so` shows several) are attached. `env PQCOTA_DSN` is required (it reads the append-only history and the machine metadata in Postgres).
@@ -282,6 +331,9 @@ Run with no arguments it prints **the latest snapshot of every node + a grade ta
 | `-history <node>` | lists that node's snapshots **oldest first**: seq, load time, ruleset, findings and edges counts, gaps |
 | `-snapshot <id>` | **detail of a single snapshot**: the asset table + that snapshot's **observed edges** (the cumulative view prints only totals, so they unfold only here) |
 | `-diff <past-id>,<latest-id>` | the **changes** between two snapshots: `added`, `removed`, `changed` |
+| `-init-schema` | creates the inventory tables and exits. It takes no other option ([setting up the database](#setting-up-the-database)) |
+
+The query does not create tables. If they are missing it points to `-init-schema` and stops with status 1, and it runs with an account that can only read.
 
 The **direction convention of `-diff`: first argument = past, second = latest** (`added` = present only in the second, `removed` = present only in the first). Giving them in reverse time order makes the direction read backwards, so **it warns if they are reversed.** The finding id is a hash of (node, name, runtime, fork, and for OpenSSL the library path when the input has it), so **even when the version changes it is caught as a `changed` of the same asset**, and two installations with the same file name on one node stay two assets. If the rulesets differ, it warns that a difference in derived values may be a recomputation result.
 

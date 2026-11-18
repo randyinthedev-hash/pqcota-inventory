@@ -68,9 +68,10 @@ export PQCOTA_ORG=acme PQCOTA_REQUIRE_ORG=1 PQCOTA_REQUIRE_SIGNATURE=1
 ```
 
 Together these three close two paths that would otherwise pass quietly: opening without an organization,
-and accepting results whose signature cannot be checked. `PQCOTA_AUTO_DDL=0` separately stops the history
-schema from being created where it was not there (the metadata and provisioning-record tables are still
-created). Details in [cmd/README](cmd/README.md#pqcota-ingest).
+and accepting results whose signature cannot be checked. `PQCOTA_AUTO_DDL=0` separately stops the writing
+commands from creating tables where they were not there. The tables are then created on purpose with
+`-init-schema` ([setting up the database](cmd/README.md#setting-up-the-database)). Details in
+[cmd/README](cmd/README.md#pqcota-ingest).
 
 ## What comes in
 

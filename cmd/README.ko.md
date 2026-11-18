@@ -4,6 +4,54 @@
 
 인벤토리 단계의 CLI(Go 바이너리)입니다. 수집기가 관측한 것을 **중앙으로 적재하고**, 쌓인 것을 읽기 전용으로 **다시 읽습니다.** 다섯 범주로 나뉩니다.
 
+## 데이터베이스 준비
+
+테이블는 **다른 명령이 데이터베이스를 쓰기 전에 한 번, 그리고 판을 올릴 때마다** 만듭니다.
+
+```bash
+PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-inventory -init-schema
+PQCOTA_DSN='postgres://pqcota_schema@db.example:5432/pqcota' pqcota-records -init-schema
+```
+
+- `pqcota-inventory -init-schema`는 인벤토리의 테이블(이력, 머신 메타데이터, 소스 근거)를 만듭니다. [`pqcota-records -init-schema`](https://github.com/randyinthedev-hash/pqcota-provisioning/blob/main/cmd/README.ko.md#pqcota-records)는 프로비저닝 기록 테이블를 만듭니다.
+- 둘 다 **한 트랜잭션**으로 돕니다. 어느 단계든 실패하면 아무것도 바뀌지 않고 종료 상태 1로 끝납니다. 마지막 줄 `schema ready: …`는 모든 테이블를 만들고 확인한 뒤에만 나옵니다.
+- 다시 실행하면 있던 테이블와 데이터는 그대로 두고, 새 판에 필요한 것만 더합니다.
+- `PQCOTA_AUTO_DDL`은 보지 않습니다. `PQCOTA_DSN` 없이 실행하거나 조회 옵션·인자와 함께 쓰면, 접속하지 않고 종료 상태 2로 거부합니다.
+
+**조회 명령은 테이블를 만들지 않습니다**(`pqcota-inventory`, `pqcota-source-evidence`, `pqcota-records`). 표나 열이 없으면 멈추고 `-init-schema`를 실행하라고 안내합니다. 계정에 권한이 없으면 어느 권한인지 알려 주고, 초기화를 권하지 않습니다.
+
+권한은 **세 역할**로 나눕니다. 이름은 예입니다.
+
+| 역할 | 권한 | 실행하는 것 |
+|---|---|---|
+| `pqcota_schema` | 스키마의 `USAGE`와 `CREATE`. 테이블의 소유자가 됩니다 | `-init-schema` |
+| `pqcota_write` | 스키마의 `USAGE`, 테이블의 `SELECT`·`INSERT`·`UPDATE`·`DELETE`, 시퀀스의 `USAGE` | 적재와 기록 명령(`pqcota-ingest`, `pqcota-cbom-ingest`, `pqcota-prune`, `pqcota-hosts`, `pqcota-profile`, `pqcota-provision`). `PQCOTA_AUTO_DDL=0`으로 실행합니다 |
+| `pqcota_read` | 스키마의 `USAGE`, 테이블의 `SELECT` | 조회 명령, `pqcota-approve` |
+
+`pqcota_write`에는 `PQCOTA_AUTO_DDL=0`을 설정합니다. 설정하지 않으면 쓰는 명령이 저장소를 열 때마다 스키마 문을 직접 실행하는데, 그것은 테이블의 소유자만 할 수 있습니다.
+
+권한은 두 번에 나눠 줍니다. `GRANT … ON ALL TABLES`는 지금 있는 표에 적용되고, `ALTER DEFAULT PRIVILEGES`는 그 역할이 나중에 만드는 표에 적용됩니다. 테이블가 이미 있는 데이터베이스에는 앞의 것이 필요합니다. 뒤의 것만으로는 이미 있는 표에 권한이 생기지 않습니다.
+
+```sql
+GRANT USAGE, CREATE ON SCHEMA public TO pqcota_schema;
+GRANT USAGE ON SCHEMA public TO pqcota_write, pqcota_read;
+-- 지금 있는 테이블와 시퀀스(초기화한 뒤, 그리고 기존 설치를 옮길 때)
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO pqcota_write;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO pqcota_write;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO pqcota_read;
+-- 앞으로 pqcota_schema가 만드는 테이블와 시퀀스
+ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pqcota_write;
+ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT USAGE ON SEQUENCES TO pqcota_write;
+ALTER DEFAULT PRIVILEGES FOR ROLE pqcota_schema IN SCHEMA public GRANT SELECT ON TABLES TO pqcota_read;
+```
+
+**pqcota 테이블가 이미 있는 데이터베이스.** 테이블는 그 소유자만 바꿀 수 있습니다. 그래서 새 역할로 `-init-schema`를 실행하면, 스키마의 `CREATE`가 있어도 `must be owner of table …`로 실패합니다. 바뀌는 것은 없습니다. 둘 중 하나를 고릅니다.
+
+- **지금 소유자로 초기화합니다.** 테이블를 만든 역할을 스키마 역할로 씁니다. 한 역할이 테이블를 모두 가졌을 때만 됩니다.
+- **소유권을 스키마 역할로 옮깁니다.** 각 테이블의 소유자(또는 슈퍼유저)가 `ALTER TABLE <표> OWNER TO pqcota_schema`를 실행합니다. 실행하는 쪽은 `pqcota_schema`의 구성원이어야 합니다. 테이블의 시퀀스와 인덱스는 테이블를 따라 옮겨집니다. `REASSIGN OWNED BY <옛 역할> TO pqcota_schema`는 그 역할이 데이터베이스에서 가진 것을 pqcota 테이블가 아닌 것까지 모두 옮기므로, pqcota만 쓰는 데이터베이스에서만 씁니다.
+
+누가 어느 테이블를 가졌는지는 `SELECT tablename, tableowner FROM pg_tables WHERE tablename LIKE 'pqcota\_%';`로 봅니다. 옮긴 뒤에는 위의 `GRANT … ON ALL …` 줄을 실행하고 `-init-schema`를 한 번 실행합니다.
+
 ## ① 적재: 가져온 결과를 이력에 쌓기
 
 **`pqcota-ingest`는 디렉터리 하나에서** 수집기가 만든 `CollectionResult` JSON 파일을 읽어 범위 게이트 → 정규화 → 추가만 가능한 이력의 순서로 적재합니다. 아래 조회 명령이 읽는 데이터가 이렇게 만들어집니다.
@@ -31,7 +79,7 @@ pqcota-ingest -verify-keys <results-dir>
 | `PQCOTA_REQUIRE_SIGNATURE` | `1`이면 확인할 키가 없을 때 **적재를 시작하지 않습니다.** 없으면 확인을 건너뛰지만 그 건수를 "서명 확인 안 함"으로 따로 보고합니다. 통과한 것과 같은 자리에 놓지 않습니다. 수집기 ID에 묶은 키를 쓰면 이 값과 상관없이 서명이 필수입니다 |
 | `PQCOTA_ORG` | 이 적재가 속한 조직입니다(소문자, 숫자, 하이픈, 2–64자). 없으면 `default`에 묶입니다. **저장소를 여는 모든 명령이 같은 값을 보아야 합니다.** 읽는 쪽과 쓰는 쪽이 다르면 데이터는 있는데 보이지 않습니다 |
 | `PQCOTA_REQUIRE_ORG` | `1`이면 조직 없이는 저장소를 열 수 없습니다. 이름으로 `default`도 쓸 수 없습니다(예약어입니다). 여러 조직이 저장소 하나를 나눠 쓰는 배포를 위한 것으로, 한번 섞이면 다시 나눌 수 없으므로 **여는 시점에** 막습니다 |
-| `PQCOTA_AUTO_DDL` | `0`이면 이력 스키마를 만들지 않습니다. 이력 스키마가 없으면 오류로 멈춥니다. 메타데이터와 프로비저닝 기록 테이블은 그래도 만듭니다. 연결이 엉뚱한 곳을 가리킬 때 새 빈 테이블을 만들어 거기에 쓰는 일을 막습니다 |
+| `PQCOTA_AUTO_DDL` | `0`이면 쓰는 명령이 테이블을 만들거나 고치지 않습니다. 테이블이나 열이 없으면 오류로 멈춥니다. 이력, 메타데이터, 소스 근거, 프로비저닝 기록 테이블 모두에 해당합니다. 연결이 엉뚱한 곳을 가리킬 때 새 빈 테이블을 만들어 거기에 쓰는 일을 막습니다. 테이블은 [`-init-schema`](#데이터베이스-준비)로 만듭니다 |
 
 > **`PQCOTA_DSN`을 주었는데 저장소를 열 수 없으면 멈춥니다.** v0.1.x는 메모리로 물러나 계속 진행했고,
 > 그러면 화면에는 성공이 찍히는데 데이터는 프로세스와 함께 사라졌습니다. DSN을 준다는 것은 영속을 요청한다는 뜻입니다.
@@ -266,6 +314,7 @@ pqcota-discover-view <results-dir> [nodes.json] [topology-out.dot]
 
 ```
 pqcota-inventory [-history <node>] [-snapshot <id>] [-diff <past-id>,<latest-id>]
+pqcota-inventory -init-schema
 ```
 
 인자 없이 실행하면 **모든 노드의 최신 스냅샷 + 등급 집계**를 출력합니다. `▸` 시스템 헤더(엔드포인트와 프로필)와 `@` 앱 라벨(공유 `.so`는 여럿이 보입니다)이 붙습니다. `env PQCOTA_DSN`이 필요합니다(Postgres의 추가만 가능한 이력과 시스템 메타데이터를 읽습니다).
@@ -275,6 +324,9 @@ pqcota-inventory [-history <node>] [-snapshot <id>] [-diff <past-id>,<latest-id>
 | `-history <node>` | 그 노드의 스냅샷을 **오래된 것부터** 나열합니다: 순번, 적재 시각, 규칙 세트, 발견 항목과 연결 간선 수, 갭 |
 | `-snapshot <id>` | **스냅샷 하나의 상세**: 자산 표 + 그 스냅샷의 **관측된 연결 간선**(누적 뷰는 합계만 출력하므로 여기서만 펼쳐집니다) |
 | `-diff <past-id>,<latest-id>` | 두 스냅샷 사이의 **변경**: `added`, `removed`, `changed` |
+| `-init-schema` | 인벤토리 테이블을 만들고 끝납니다. 다른 옵션과 함께 쓰지 않습니다([데이터베이스 준비](#데이터베이스-준비)) |
+
+조회는 테이블을 만들지 않습니다. 테이블이 없으면 `-init-schema`를 안내하고 종료 상태 1로 멈추며, 읽기 권한만 있는 계정으로도 실행됩니다.
 
 **`-diff`의 방향 규약: 첫 번째 인자 = 과거, 두 번째 = 최신**입니다(`added` = 두 번째에만 있음, `removed` = 첫 번째에만 있음). 시간 순서를 거꾸로 주면 방향이 반대로 읽히므로 **거꾸로 주면 경고합니다.** 발견 항목 id는 (노드, 이름, 런타임, fork, OpenSSL은 입력에 있으면 라이브러리 경로까지)의 해시입니다. 그래서 **버전이 바뀌어도 같은 자산의 `changed`로 잡히고**, 한 노드에 파일 이름이 같은 설치본이 둘이면 자산 둘로 남습니다. 규칙 세트가 다르면 파생 값의 차이가 재계산의 결과일 수 있다고 경고합니다.
 

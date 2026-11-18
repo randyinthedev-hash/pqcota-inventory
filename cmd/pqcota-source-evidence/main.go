@@ -104,7 +104,7 @@ func main() {
 	st, err := store.OpenPgStoreIn(context.Background(), dsn, org.FromEnv())
 	if errors.Is(err, history.ErrSchemaMissing) {
 		fmt.Fprintln(os.Stderr, "no source evidence tables in this database:", err)
-		fmt.Fprintln(os.Stderr, "(nothing was stored here with pqcota-cbom-ingest --source-evidence yet, or PQCOTA_DSN points at another database; this command does not create them)")
+		fmt.Fprintln(os.Stderr, "(the schema was not initialized here — run pqcota-inventory -init-schema — or PQCOTA_DSN points at another database; this command does not create tables)")
 		os.Exit(1)
 	}
 	if err != nil {

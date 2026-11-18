@@ -9,6 +9,8 @@ import (
 
 	inventoryv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/inventory/v1"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
+	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
+	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/pgschema"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -74,11 +76,43 @@ func NewPgMetaStoreIn(ctx context.Context, dsn, organization string) (*PgMetaSto
 	if err != nil {
 		return nil, err
 	}
-	if _, err := pool.Exec(ctx, metaSchemaSQL); err != nil {
+	if err := ensureMetaSchema(ctx, pool); err != nil {
 		pool.Close()
 		return nil, err
 	}
 	return &PgMetaStore{pool: pool, org: o}, nil
+}
+
+// OpenPgMetaStoreIn — 조회용으로 연다. DDL을 돌리지 않고 표·열이 있고 읽을 수 있는지만 본다(PQCOTA_AUTO_DDL과 무관).
+// 조회가 빈 DB에 표를 만들면 안 되고, 읽기 권한만 있는 계정으로도 열려야 한다.
+// 표·열이 없으면 history.ErrSchemaMissing, 권한이 없으면 pgschema.ErrPermission. 쓰기 메서드는 권한에 따라 실패한다.
+func OpenPgMetaStoreIn(ctx context.Context, dsn, organization string) (*PgMetaStore, error) {
+	o, err := org.Resolve(organization)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := pgschema.Check(ctx, pool, MetaSchema().Tables, history.InitHint); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return &PgMetaStore{pool: pool, org: o}, nil
+}
+
+// MetaSchema — 메타 저장소의 표 둘(엔드포인트·프로필). 초기화와 확인이 같은 SQL을 쓴다.
+func MetaSchema() pgschema.Part { return pgschema.NewPart("metadata", metaSchemaSQL) }
+
+// ensureMetaSchema — 이력과 같은 스위치(PQCOTA_AUTO_DDL)를 따른다. v0.15.0까지는 스위치와 상관없이 늘 DDL을 돌렸다.
+// 그래서 표의 소유자가 아닌 계정은 DML 권한이 있어도 이 저장소를 열지 못했다(ALTER TABLE은 소유자만).
+func ensureMetaSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	if history.AutoDDL() {
+		_, err := pool.Exec(ctx, metaSchemaSQL)
+		return err
+	}
+	return pgschema.Check(ctx, pool, MetaSchema().Tables, history.AutoDDLEnv+"=0 turned automatic creation off — "+history.InitHint)
 }
 
 // Org — 이 핸들이 묶인 조직(org.Scoped).

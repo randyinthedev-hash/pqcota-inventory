@@ -5,12 +5,10 @@ package history
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/pgschema"
 )
 
 // AutoDDLEnv — 이 환경변수가 "0"이면 저장소를 열 때 스키마를 만들지 않는다.
@@ -21,50 +19,37 @@ import (
 // 이것을 끄고, 스키마는 마이그레이션으로 미리 올린다.
 //
 // 끈 상태에서 스키마가 없으면 [ErrSchemaMissing]으로 중단한다 — 알리지 않고 만들어 주지 않는다.
+// 스키마는 `pqcota-inventory -init-schema`로 미리 올린다. 메타·프로비저닝 기록 저장소도 이 스위치를 따른다.
 const AutoDDLEnv = "PQCOTA_AUTO_DDL"
 
-// ErrSchemaMissing — 자동 DDL이 꺼져 있는데 테이블이 없다.
-var ErrSchemaMissing = errors.New("inventory schema is missing")
+// ErrSchemaMissing — 필요한 표나 열이 없다. [pgschema.ErrMissing]과 같은 값이다(errors.Is로 둘 다 맞는다).
+// 권한이 없어서 못 보는 것은 이것이 아니라 [pgschema.ErrPermission]이다 — 초기화를 권하지 않는다.
+var ErrSchemaMissing = pgschema.ErrMissing
+
+// InitHint — 표·열이 없을 때 안내하는 명령.
+const InitHint = "run `pqcota-inventory -init-schema` as the schema owner, or check search_path"
 
 // autoDDL — 기본은 켬. 명시적으로 "0"일 때만 끈다.
 func autoDDL() bool { return os.Getenv(AutoDDLEnv) != "0" }
 
-// ensureSchema — 스키마를 올리거나, 올리지 않기로 했으면 있는지 확인만 한다.
+// AutoDDL — 다른 저장소(메타·프로비저닝 기록)가 같은 스위치를 따르도록 내보낸다.
+func AutoDDL() bool { return autoDDL() }
+
+// Schema — 이력 저장소가 맡은 표 전부(스냅샷·관측·절단·거절·선언). 초기화와 확인이 같은 SQL을 쓴다.
+func Schema() pgschema.Part {
+	return pgschema.NewPart("history", schemaSQL+rejectionSchemaSQL+attributionSchemaSQL)
+}
+
+// ensureSchema — 스키마를 올리거나, 올리지 않기로 했으면 표·열이 모두 있는지 확인만 한다.
 func ensureSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	if autoDDL() {
 		_, err := pool.Exec(ctx, schemaSQL+rejectionSchemaSQL+attributionSchemaSQL)
 		return err
 	}
-	var exists bool
-	if err := pool.QueryRow(ctx,
-		`SELECT to_regclass('pqcota_snapshots') IS NOT NULL`).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%w: %s=0 turned automatic creation off — apply the schema first, or check search_path",
-			ErrSchemaMissing, AutoDDLEnv)
-	}
-	return nil
+	return pgschema.Check(ctx, pool, Schema().Tables, AutoDDLEnv+"=0 turned automatic creation off — "+InitHint)
 }
 
-// readTables — 조회에 쓰는 테이블. 하나라도 없으면 스키마가 없는 것으로 본다.
-var readTables = []string{"pqcota_snapshots", "pqcota_observations", "pqcota_retention_events"}
-
-// checkSchema — DDL 없이 조회에 쓰는 테이블이 모두 있는지 본다(OpenPgStoreIn). 자동 DDL을 끈 쓰기 경로의
-// 확인(ensureSchema)은 지금처럼 스냅샷 테이블만 본다 — 그 동작은 바꾸지 않는다.
+// checkSchema — DDL 없이 이 저장소의 표·열이 모두 있고 읽을 수 있는지 본다(OpenPgStoreIn).
 func checkSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	var missing []string
-	for _, t := range readTables {
-		var exists bool
-		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, t).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
-			missing = append(missing, t)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("%w: %s", ErrSchemaMissing, strings.Join(missing, ", "))
-	}
-	return nil
+	return pgschema.Check(ctx, pool, Schema().Tables, InitHint)
 }

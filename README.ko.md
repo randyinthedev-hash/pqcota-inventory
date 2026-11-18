@@ -63,7 +63,7 @@ pqcota-source-evidence                                     # list what was store
 export PQCOTA_ORG=acme PQCOTA_REQUIRE_ORG=1 PQCOTA_REQUIRE_SIGNATURE=1
 ```
 
-이 셋은 그대로 두면 경고 없이 지나갈 두 경로를 막습니다. 조직 없이 여는 것과, 서명을 확인할 수 없는 결과를 받는 것입니다. 없던 스키마를 만드는 것은 따로 `PQCOTA_AUTO_DDL=0`이 막는데, 이력 스키마에만 해당합니다(메타데이터와 프로비저닝 기록 테이블은 그래도 만듭니다). 자세한 내용은 [cmd/README](cmd/README.ko.md#pqcota-ingest)에 있습니다.
+이 셋은 그대로 두면 경고 없이 지나갈 두 경로를 막습니다. 조직 없이 여는 것과, 서명을 확인할 수 없는 결과를 받는 것입니다. 쓰는 명령이 없던 테이블을 만드는 것은 따로 `PQCOTA_AUTO_DDL=0`이 막습니다. 그러면 테이블은 `-init-schema`로 따로 만듭니다([데이터베이스 준비](cmd/README.ko.md#데이터베이스-준비)). 자세한 내용은 [cmd/README](cmd/README.ko.md#pqcota-ingest)에 있습니다.
 
 ## 무엇이 들어오는가
 
