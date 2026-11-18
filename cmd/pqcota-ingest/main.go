@@ -27,6 +27,10 @@
 //	                               같은 ID를 여러 번 적으면 교체용으로 키를 함께 받는다.
 //	                               `<base64 공개키>,...` → 기존 목록 모드. 아무 키로든 맞으면 통과(경고를 낸다).
 //	                               두 꼴이 섞이거나 키가 틀리면 결과를 읽기 전에 종료 코드 2.
+//	env PQCOTA_VERIFY_KEY_FILE   : (선택) 노드에 묶은 키 파일. 줄마다 `<노드 ID> <수집기 ID,…> <base64 공개키>`.
+//	                               결과의 (collector_id, target_node_id)에 등록된 키로만 검증하고, 엣지의 src_node_id가
+//	                               그 노드여야 한다. 시작할 때 한 번 읽은 바이트로 판정한다. PQCOTA_VERIFY_KEY와 함께 쓰거나
+//	                               읽기·파싱이 안 되면 결과를 읽기 전에 종료 코드 2.
 //	env PQCOTA_REQUIRE_SIGNATURE : "1"이면 검증할 키가 없을 때 **적재를 시작하지 않는다.**
 //	                               알리지 않고 통과하는 경로를 닫아야 하는 배포용(§2.6).
 //	env PQCOTA_ORG               : (선택) 이 적재가 속할 조직. 여러 조직이 한 저장소를 쓰면 필수.
@@ -68,11 +72,21 @@ func main() {
 	// 키 설정은 결과를 하나도 읽기 전에 본다. 틀린 설정으로 일부만 적재하지 않는다.
 	keys, err := loadVerifyKeys()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "PQCOTA_VERIFY_KEY:", err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	label := "PQCOTA_VERIFY_KEY"
+	if keys.nodes != nil {
+		label = keyFileEnv
+	}
 	for _, w := range keys.warnings() {
-		fmt.Fprintln(os.Stderr, "⚠ PQCOTA_VERIFY_KEY:", w)
+		fmt.Fprintf(os.Stderr, "⚠ %s: %s\n", label, w)
+	}
+	// 파일 권한은 설정 오류와 따로 알린다. 막지 않는다(혼자 쓰는 설치가 있다).
+	if keys.nodes != nil {
+		for _, w := range keyFilePermWarnings(keys.file) {
+			fmt.Fprintf(os.Stderr, "⚠ %s permissions: %s\n", keyFileEnv, w)
+		}
 	}
 	requireSig := os.Getenv("PQCOTA_REQUIRE_SIGNATURE") == "1"
 
@@ -84,6 +98,9 @@ func main() {
 			os.Exit(1)
 		}
 		master = scope.NewMaster(ids)
+		for _, w := range keys.scopeWarnings(ids) {
+			fmt.Fprintf(os.Stderr, "⚠ %s: %s\n", keyFileEnv, w)
+		}
 	}
 
 	results, flaws := resultio.LoadDir(dir)
@@ -112,8 +129,8 @@ func main() {
 	var verifySig func(*discoveryv1.CollectionResult) bool
 	var verifyCollector func(*discoveryv1.CollectionResult) error
 	switch {
-	case keys.bound != nil:
-		verifyCollector = func(r *discoveryv1.CollectionResult) error { return sign.VerifyBound(keys.bound, r) }
+	case keys.nodes != nil, keys.bound != nil:
+		verifyCollector = keys.verifier()
 	case len(keys.legacy) > 0:
 		verifySig = func(r *discoveryv1.CollectionResult) bool { return sign.Verify(keys.legacy, r) }
 	}
@@ -157,7 +174,10 @@ func main() {
 	} else {
 		fmt.Printf("scope gate: skipped (no CMDB given)\n")
 	}
-	if verifyCollector != nil {
+	if keys.nodes != nil {
+		n, nk, anyN := keys.fileStats()
+		fmt.Printf("signature check: bound to nodes (%d nodes, %d keys, %d entries for any node) — a signature is required; each result is checked only against the keys registered for its collector_id on its target_node_id, and its edges must leave that node\n", n, nk, anyN)
+	} else if verifyCollector != nil {
 		fmt.Printf("signature check: bound to collector IDs (%d IDs, %d keys) — a signature is required; each result is checked only against the keys registered for its collector_id\n", len(keys.bound), keys.count())
 	} else if verifySig != nil {
 		fmt.Printf("signature check: verified with PQCOTA_VERIFY_KEY (mismatches are rejected, §2.6)\n")
