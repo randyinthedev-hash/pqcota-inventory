@@ -81,8 +81,9 @@ func roleLine(edges []*discoveryv1.ObservedEdge) string {
 }
 
 // sameAppAssets — 같은 스냅샷에서 이 엣지와 **같은 비어 있지 않은 app_key**를 가진 자산. 「같은 앱 키로 관측된 라이브러리」일
-// 뿐이다 — 그 연결이 그 라이브러리를 거쳤다는 근거가 아니다(한 프로세스가 라이브러리를 여럿 올릴 수 있고, 연결이 어느 것을
-// 썼는지는 패킷에 없다). 판정하지 않는다.
+// 뿐이다 — 그 연결이 그 라이브러리를 거쳤다는 근거가 아니다. 앱 키(실행 파일 경로·systemd 유닛)는 여러 프로세스가 함께
+// 가질 수 있어 연결을 처리한 프로세스에 올라 있었는지도 모르고, 한 프로세스가 라이브러리를 여럿 올릴 수 있으며, 연결이
+// 어느 것을 썼는지는 패킷에 없다. 판정하지 않는다.
 func sameAppAssets(e *discoveryv1.ObservedEdge, findings []*discoveryv1.Finding) []string {
 	key := e.GetAppKey()
 	if key == "" {
