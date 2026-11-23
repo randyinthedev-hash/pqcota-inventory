@@ -325,6 +325,7 @@ It prints the discovered assets (OpenSSL, JCA) and the grade of each observed co
 
 ```
 pqcota-inventory [-history <node>] [-snapshot <id>] [-diff <past-id>,<latest-id>]
+pqcota-inventory -topology <out.dot | ->
 pqcota-inventory -init-schema
 ```
 
@@ -335,6 +336,7 @@ Run with no arguments it prints **the latest snapshot of every node + a grade ta
 | `-history <node>` | lists that node's snapshots **oldest first**: seq, load time, ruleset, findings and edges counts, gaps |
 | `-snapshot <id>` | **detail of a single snapshot**: the asset table + that snapshot's **observed edges** (the cumulative view prints only totals, so they unfold only here) |
 | `-diff <past-id>,<latest-id>` | the **changes** between two snapshots: `added`, `removed`, `changed` |
+| `-topology <out.dot \| ->` | writes the **observed topology** as DOT: every node's current snapshot, one line per stored record (below) |
 | `-init-schema` | creates the inventory tables and exits. It takes no other option ([setting up the database](#setting-up-the-database)) |
 
 The query does not create tables. If they are missing it points to `-init-schema` and stops with status 1, and it runs with an account that can only read.
@@ -346,6 +348,16 @@ The **direction convention of `-diff`: first argument = past, second = latest** 
 **Edges are drawn from the observing node** (from v0.18.0). `web-01 → 10.0.0.9:443` is a connection `web-01` opened, `web-02 ← 10.0.0.1 (on :443)` one that `web-02` accepted, and `↔ … (role not confirmed)` one whose role netcap could not confirm. When both nodes observe the same connection each keeps its own record, so the totals add a line `by role: client side … · server side … · role not confirmed …` and do not add the sides up as one count of connections. The line appears only when there are server-side or unconfirmed records. `-snapshot` lists, under an edge, the libraries observed in the same snapshot with the same app key as that edge (`same app key in this snapshot: libssl.so.3 3.0.13`). It is not evidence that the connection used them. Several processes can share an app key (an executable path, a systemd unit), so it does not show that the process behind the connection loaded them either. Declared apps are laid over client records only.
 
 **The latest snapshot is the last state loaded, not the bottom row.** Because a state seen before reuses its earlier snapshot, content that goes A → B → A leaves two snapshots, A and B, and the node is in state A. A node's latest snapshot is the one its most recent observation record points to; the view with no arguments, the load summary and the provisioning before-capture all read it. `-history` marks that row `← current (last ingested)`. For history written without observation records, the newest snapshot is taken.
+
+**`-topology` draws what is stored, as it is** (from v0.20.0). It reads every node's current snapshot and writes Graphviz DOT; render it with, for example, `dot -Tsvg topology.dot -o topology.svg`.
+
+- **One line is one stored record.** When both nodes observe the same connection there are two lines: the client node's record, drawn from its app to the peer, and the server node's record, drawn from the peer to its app. Each line names the node that observed it, its role, and that record's count (`×3`); the counts are not added up. A record whose role was not confirmed is a dashed line with no arrow.
+- **The app at each end is the observing node's.** A record only knows the app on the side that observed it, so the other end is the peer node or address.
+- **A peer is tied to a node only when its IP belongs to exactly one registered endpoint** (`pqcota-hosts`). An unregistered address, or one shared by several registered nodes, is a note box that says which. The registered IP is the one SSH reaches, so a node reached on another of its addresses also shows as an address.
+- **Libraries hang off an app by a dotted line** when they were observed in the same snapshot of the same node with the same non-empty app key. That is not evidence that the connection used them.
+- **Each node shows its own time**: the last time its current snapshot was loaded (UTC), or, for older history without load records, when the snapshot was created. A load time is not an observation time; loading the same result again updates it. Nodes are loaded at different times, so the picture is not one moment.
+
+With `-` the DOT goes to standard output and the one-line summary to standard error; with a path the summary goes to standard output. `-topology` takes no other query option.
 
 ### `pqcota-source-evidence`
 

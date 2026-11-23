@@ -4,6 +4,7 @@
 package inventory
 
 import (
+	"sort"
 	"sync"
 
 	inventoryv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/inventory/v1"
@@ -17,6 +18,13 @@ type MetaStore interface {
 	UpsertProfile(*inventoryv1.MachineProfile) error
 	Endpoint(nodeID string) (*inventoryv1.MachineEndpoint, error)
 	Profile(nodeID string) (*inventoryv1.MachineProfile, error)
+}
+
+// EndpointLister — 등록된 엔드포인트 전부. **MetaStore와 별개다.** MetaStore를 넓히면 그것을 구현한 외부 코드가
+// 깨진다(SnapshotLookup과 같은 이유). 토폴로지가 관측된 상대 IP를 등록 노드로 이을 때 쓴다 — IP가 한 노드에만
+// 대응하는지 알려면 목록 전체가 필요하다. node_id 순서로 돌려준다.
+type EndpointLister interface {
+	Endpoints() ([]*inventoryv1.MachineEndpoint, error)
 }
 
 // MemMetaStore — 인메모리 구현(테스트·단일 실행).
@@ -50,6 +58,18 @@ func (m *MemMetaStore) UpsertEndpoint(e *inventoryv1.MachineEndpoint) error {
 	defer m.mu.Unlock()
 	m.ep[e.GetNodeId()] = e
 	return nil
+}
+
+// Endpoints — EndpointLister. node_id 순서.
+func (m *MemMetaStore) Endpoints() ([]*inventoryv1.MachineEndpoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*inventoryv1.MachineEndpoint, 0, len(m.ep))
+	for _, e := range m.ep {
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GetNodeId() < out[j].GetNodeId() })
+	return out, nil
 }
 
 func (m *MemMetaStore) UpsertProfile(p *inventoryv1.MachineProfile) error {

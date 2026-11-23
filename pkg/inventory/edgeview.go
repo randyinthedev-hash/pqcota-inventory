@@ -85,7 +85,12 @@ func roleLine(edges []*discoveryv1.ObservedEdge) string {
 // 가질 수 있어 연결을 처리한 프로세스에 올라 있었는지도 모르고, 한 프로세스가 라이브러리를 여럿 올릴 수 있으며, 연결이
 // 어느 것을 썼는지는 패킷에 없다. 판정하지 않는다.
 func sameAppAssets(e *discoveryv1.ObservedEdge, findings []*discoveryv1.Finding) []string {
-	key := e.GetAppKey()
+	return assetsWithAppKey(e.GetAppKey(), findings)
+}
+
+// assetsWithAppKey — 같은 스냅샷의 자산 가운데 비어 있지 않은 앱 키 key를 가진 것의 라벨(중복 없이, 자산 순서대로).
+// 화면(-snapshot)과 토폴로지(-topology)가 같은 판정을 쓴다.
+func assetsWithAppKey(key string, findings []*discoveryv1.Finding) []string {
 	if key == "" {
 		return nil
 	}

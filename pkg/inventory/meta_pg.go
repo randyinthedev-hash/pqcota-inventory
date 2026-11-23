@@ -156,6 +156,29 @@ func (p *PgMetaStore) Endpoint(nodeID string) (*inventoryv1.MachineEndpoint, err
 	return e, protojson.Unmarshal(j, e)
 }
 
+// Endpoints — EndpointLister. 이 조직의 엔드포인트 전부, node_id 순서.
+func (p *PgMetaStore) Endpoints() ([]*inventoryv1.MachineEndpoint, error) {
+	rows, err := p.pool.Query(context.Background(),
+		`SELECT endpoint FROM pqcota_endpoint WHERE org=$1 ORDER BY node_id`, p.org)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*inventoryv1.MachineEndpoint
+	for rows.Next() {
+		var j []byte
+		if err := rows.Scan(&j); err != nil {
+			return nil, err
+		}
+		e := &inventoryv1.MachineEndpoint{}
+		if err := protojson.Unmarshal(j, e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (p *PgMetaStore) Profile(nodeID string) (*inventoryv1.MachineProfile, error) {
 	var j []byte
 	err := p.pool.QueryRow(context.Background(),

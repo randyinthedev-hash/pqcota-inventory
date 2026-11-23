@@ -43,14 +43,19 @@ func main() {
 	histNode := flag.String("history", "", "list a node's snapshot history (append-only measurement log)")
 	snapID := flag.String("snapshot", "", "detail for one snapshot — assets and observed edges")
 	diffPair := flag.String("diff", "", `changes between two snapshots — "older-id,newer-id" (first=older, second=newer; observations only, not a verdict)`)
+	topology := flag.String("topology", "", `write the observed topology as DOT to this path ("-" = standard output): one line per stored record, each node's current snapshot`)
 	initSchema := flag.Bool("init-schema", false, "create every inventory table (history, metadata, source evidence) in one transaction and exit; run it as the schema owner, and again after each upgrade")
 	flag.Parse()
 
 	if *initSchema {
-		if *histNode != "" || *snapID != "" || *diffPair != "" || flag.NArg() > 0 {
-			fmt.Fprintln(os.Stderr, "-init-schema only creates the schema; it does not take -history, -snapshot, -diff or arguments")
+		if *histNode != "" || *snapID != "" || *diffPair != "" || *topology != "" || flag.NArg() > 0 {
+			fmt.Fprintln(os.Stderr, "-init-schema only creates the schema; it does not take -history, -snapshot, -diff, -topology or arguments")
 			os.Exit(2)
 		}
+	}
+	if *topology != "" && (*histNode != "" || *snapID != "" || *diffPair != "" || flag.NArg() > 0) {
+		fmt.Fprintln(os.Stderr, "-topology draws every node's current snapshot; it does not take -history, -snapshot, -diff or arguments")
+		os.Exit(2)
 	}
 
 	dsn := os.Getenv("PQCOTA_DSN")
@@ -69,6 +74,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer hist.Close()
+
+	if *topology != "" {
+		os.Exit(writeTopology(hist, dsn, *topology, os.Stdout, os.Stderr))
+	}
 
 	out, err := run(hist, dsn, *histNode, *snapID, *diffPair)
 	if err != nil {
@@ -187,5 +196,39 @@ func runInit(ctx context.Context, c pgschema.Conn, stdout, stderr io.Writer) int
 		return 1
 	}
 	fmt.Fprint(stdout, pgschema.FormatReport(rep))
+	return 0
+}
+
+// writeTopology — -topology. 저장된 관측을 그대로 DOT로(계획 2026-11-23-inventory-topology). path가 "-"면 DOT는
+// 표준 출력, 요약 한 줄은 표준 오류로 간다. 아니면 파일에 쓰고 요약은 표준 출력이다.
+func writeTopology(store history.Store, dsn, path string, stdout, stderr io.Writer) int {
+	meta, err := inventory.OpenPgMetaStoreIn(context.Background(), dsn, org.FromEnv())
+	if err != nil {
+		fmt.Fprintln(stderr, "metadata store:", err)
+		return 1
+	}
+	defer meta.Close()
+	return topologyTo(store, meta, path, stdout, stderr)
+}
+
+// topologyTo — writeTopology의 저장소를 받는 쪽(시험이 메모리 저장소로 부른다).
+func topologyTo(store history.Store, eps inventory.EndpointLister, path string, stdout, stderr io.Writer) int {
+	in, err := inventory.LoadTopology(store, eps)
+	if err != nil {
+		fmt.Fprintln(stderr, "reading the inventory:", err)
+		return 1
+	}
+	dot, sum := inventory.RenderTopology(in)
+	line := fmt.Sprintf("topology: %d nodes · %d lines (one per stored record) · %d address boxes", sum.Nodes, sum.Edges, sum.Addresses)
+	if path == "-" {
+		fmt.Fprint(stdout, dot)
+		fmt.Fprintln(stderr, line)
+		return 0
+	}
+	if err := os.WriteFile(path, []byte(dot), 0o644); err != nil {
+		fmt.Fprintln(stderr, "writing the topology:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s → %s\n", line, path)
 	return 0
 }
