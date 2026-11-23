@@ -6,6 +6,7 @@ package inventory_test
 import (
 	"math/rand"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -112,8 +113,8 @@ func has(t *testing.T, s, sub, what string) {
 // T2(핵심): 양쪽에서 관측한 연결은 선 둘. 선마다 관측 노드·역할·그 기록의 횟수. 횟수를 더하지 않는다. 앱은 각자의 것.
 func TestTopologyBothSidesAreTwoLines(t *testing.T) {
 	dot, _ := inventory.RenderTopology(scenario())
-	cli := linesFrom(dot, "app|web-01|/usr/bin/openssl", "node|web-02")
-	srv := linesFrom(dot, "node|web-01", "app|web-02|/usr/sbin/nginx")
+	cli := linesFrom(dot, "app|6:web-01|/usr/bin/openssl", "node|web-02")
+	srv := linesFrom(dot, "node|web-01", "app|6:web-02|/usr/sbin/nginx")
 	if len(cli) != 1 || len(srv) != 1 {
 		t.Fatalf("want exactly one client-side and one server-side line, got %d and %d:\n%s", len(cli), len(srv), strings.Join(edgeLines(dot), "\n"))
 	}
@@ -138,14 +139,14 @@ func TestTopologyBothSidesAreTwoLines(t *testing.T) {
 	if strings.Contains(dot, "×6") {
 		t.Error("the counts of the two records were added up (×6)")
 	}
-	has(t, dot, `"app|web-01|/usr/bin/openssl" [label="/usr/bin/openssl\n(exe-path)", shape=component]`, "web-01's own app")
-	has(t, dot, `"app|web-02|/usr/sbin/nginx" [label="/usr/sbin/nginx\n(exe-path)", shape=component]`, "web-02's own app")
+	has(t, dot, `"app|6:web-01|/usr/bin/openssl" [label="/usr/bin/openssl\n(exe-path)", shape=component]`, "web-01's own app")
+	has(t, dot, `"app|6:web-02|/usr/sbin/nginx" [label="/usr/sbin/nginx\n(exe-path)", shape=component]`, "web-02's own app")
 }
 
 // T1: 한쪽만 관측. 상대는 스냅샷이 없는 등록 노드.
 func TestTopologyOneSide(t *testing.T) {
 	dot, _ := inventory.RenderTopology(scenario())
-	l := linesFrom(dot, "app|web-01|/usr/bin/openssl", "node|web-03")
+	l := linesFrom(dot, "app|6:web-01|/usr/bin/openssl", "node|web-03")
 	if len(l) != 1 {
 		t.Fatalf("lines to web-03: %v", l)
 	}
@@ -157,7 +158,7 @@ func TestTopologyOneSide(t *testing.T) {
 func TestTopologyRoleNotConfirmed(t *testing.T) {
 	dot, _ := inventory.RenderTopology(scenario())
 	for name, l := range map[string][]string{
-		"current form (IP only)":          linesFrom(dot, "app|web-01|/usr/sbin/sshd", "node|web-02"),
+		"current form (IP only)":          linesFrom(dot, "app|6:web-01|/usr/sbin/sshd", "node|web-02"),
 		"older record (ip:port, no role)": linesFrom(dot, "node|old-01", "node|old-target"),
 	} {
 		if len(l) != 1 {
@@ -174,7 +175,7 @@ func TestTopologyRoleNotConfirmed(t *testing.T) {
 // T4·T5: 같은 IP를 쓰는 등록 노드 둘, 미등록 IP — 주소 상자와 그 이유.
 func TestTopologySharedAndUnregisteredIP(t *testing.T) {
 	dot, sum := inventory.RenderTopology(scenario())
-	if len(linesFrom(dot, "app|web-01|/usr/bin/psql", "addr|10.0.1.50")) != 1 {
+	if len(linesFrom(dot, "app|6:web-01|/usr/bin/psql", "addr|10.0.1.50")) != 1 {
 		t.Error("the shared IP did not end at an address box")
 	}
 	has(t, dot, `"addr|10.0.1.50" [label="10.0.1.50\nIP shared by 2 registered nodes", shape=note]`, "shared IP")
@@ -183,7 +184,7 @@ func TestTopologySharedAndUnregisteredIP(t *testing.T) {
 			t.Errorf("a line was tied to %s although its IP is shared", n)
 		}
 	}
-	if len(linesFrom(dot, "app|web-01|/usr/bin/psql", "addr|10.0.1.30")) != 1 {
+	if len(linesFrom(dot, "app|6:web-01|/usr/bin/psql", "addr|10.0.1.30")) != 1 {
 		t.Error("the unregistered IP did not end at an address box")
 	}
 	has(t, dot, `"addr|10.0.1.30" [label="10.0.1.30\nunregistered", shape=note]`, "unregistered IP")
@@ -207,12 +208,12 @@ func TestTopologyIPv6(t *testing.T) {
 func TestTopologyAppLibraries(t *testing.T) {
 	dot, _ := inventory.RenderTopology(scenario())
 	for _, l := range []string{"libssl.so.3", "libcrypto.so.3 3.5.8"} {
-		got := linesFrom(dot, "app|web-01|/usr/bin/openssl", "lib|web-01|"+l)
+		got := linesFrom(dot, "app|6:web-01|/usr/bin/openssl", "lib|6:web-01|"+l)
 		if len(got) != 1 || !strings.Contains(got[0], "style=dotted") {
 			t.Errorf("%s: %v", l, got)
 		}
 	}
-	if len(linesFrom(dot, "app|web-02|/usr/sbin/nginx", "lib|web-02|libssl.so.3")) != 1 {
+	if len(linesFrom(dot, "app|6:web-02|/usr/sbin/nginx", "lib|6:web-02|libssl.so.3")) != 1 {
 		t.Error("web-02's library was not tied to its app")
 	}
 	for _, l := range []string{"libnginx-only.so", "libnokey.so"} {
@@ -284,4 +285,80 @@ func TestLoadTopologyFromStores(t *testing.T) {
 		t.Errorf("summary %+v", sum)
 	}
 	has(t, dot, "last loaded ", "load time from observation stats")
+}
+
+// 회귀(검토 1): 노드 ID나 앱 키에 「|」가 있어도 두 노드의 앱이 합쳐지지 않는다. (노드 "a|b", 앱 "c")와 (노드 "a", 앱 "b|c")는
+// 각자의 클러스터에 각자의 앱으로 있고, 선도 각자의 것이다. 라이브러리도 같다.
+func TestTopologyIDsKeepBoundaries(t *testing.T) {
+	in := inventory.TopologyInput{Snapshots: []*history.Snapshot{
+		{ID: "s1", NodeID: "a|b", Edges: []*discoveryv1.ObservedEdge{tEdge("a|b", "192.0.2.1:443", 443, cl, "", "c", 1)},
+			Findings: []*discoveryv1.Finding{lib("libx.so", "", "c")}},
+		{ID: "s2", NodeID: "a", Edges: []*discoveryv1.ObservedEdge{tEdge("a", "192.0.2.2:443", 443, cl, "", "b|c", 1)},
+			Findings: []*discoveryv1.Finding{lib("libx.so", "", "b|c")}},
+	}}
+	dot, _ := inventory.RenderTopology(in)
+	appAB, appA := "app|3:a|b|c", "app|1:a|b|c"
+	for _, c := range []struct{ app, lib, addr, cluster string }{
+		{appAB, "lib|3:a|b|libx.so", "addr|192.0.2.1", `label="a|b`},
+		{appA, "lib|1:a|libx.so", "addr|192.0.2.2", `label="a\n`},
+	} {
+		if len(linesFrom(dot, c.app, c.addr)) != 1 || len(linesFrom(dot, c.app, c.lib)) != 1 {
+			t.Errorf("%s: its line or library is missing:\n%s", c.app, dot)
+		}
+		// 앱 선언은 그 노드의 클러스터 안에만 있다.
+		start := strings.Index(dot, c.cluster)
+		end := strings.Index(dot[start:], "  }\n")
+		if start < 0 || end < 0 || !strings.Contains(dot[start:start+end], `"`+c.app+`" [label=`) {
+			t.Errorf("%s is not declared inside its own cluster", c.app)
+		}
+	}
+	if strings.Count(dot, `"`+appAB+`" [label=`)+strings.Count(dot, `"`+appA+`" [label=`) != 2 {
+		t.Error("the two apps were not declared once each")
+	}
+	if len(linesFrom(dot, appAB, "addr|192.0.2.2")) != 0 || len(linesFrom(dot, appA, "addr|192.0.2.1")) != 0 {
+		t.Error("one node's record was attached to the other node's app")
+	}
+}
+
+// 회귀(검토 2): 같은 앱 키의 기록 둘이 종류를 빈 값과 systemd-unit으로 달리 보고해도, 비어 있지 않은 값을 모아 정렬해
+// 적는다. 기록 순서를 뒤집어도 DOT 바이트가 같다.
+func TestTopologyAppKindsAreStable(t *testing.T) {
+	mk := func(kinds ...string) inventory.TopologyInput {
+		var edges []*discoveryv1.ObservedEdge
+		for i, k := range kinds {
+			e := tEdge("n1", "192.0.2."+strconv.Itoa(i+1)+":443", 443, cl, "", "sshd.service", 1)
+			e.AppKeyKind = k
+			edges = append(edges, e)
+		}
+		return inventory.TopologyInput{Snapshots: []*history.Snapshot{{ID: "s", NodeID: "n1", Edges: edges}}}
+	}
+	a, _ := inventory.RenderTopology(mk("", "systemd-unit"))
+	b, _ := inventory.RenderTopology(mk("systemd-unit", ""))
+	if a != b {
+		t.Fatal("the app label depends on the order of the records")
+	}
+	has(t, a, `[label="sshd.service\n(systemd-unit)", shape=component]`, "kind kept")
+	c, _ := inventory.RenderTopology(mk("systemd-unit", "exe-path"))
+	d, _ := inventory.RenderTopology(mk("exe-path", "systemd-unit"))
+	if c != d {
+		t.Fatal("two kinds: output depends on order")
+	}
+	has(t, c, `(exe-path, systemd-unit)`, "both kinds kept, sorted")
+}
+
+// 회귀(검토 3): dst_node_id로만 나온 노드는 등록 목록에 있을 때만 「registered」다.
+func TestTopologyPeerNodeIDNotRegistered(t *testing.T) {
+	in := scenario()
+	ghost := tEdge("web-01", "198.51.100.7:443", 443, cl, "", "", 1)
+	ghost.DstNodeId = "ghost"
+	in.Snapshots[0].Edges = append(in.Snapshots[0].Edges, ghost)
+	dot, _ := inventory.RenderTopology(in)
+	has(t, dot, `"node|ghost" [label="ghost\nno snapshot", shape=box`, "unregistered node id")
+	if strings.Contains(dot, `"node|ghost" [label="ghost\nregistered`) {
+		t.Error("a node id with no endpoint was called registered")
+	}
+	has(t, dot, `"node|web-03" [label="web-03\nregistered, no snapshot"`, "registered node without a snapshot")
+	if len(linesFrom(dot, "node|web-01", "node|ghost")) != 1 {
+		t.Error("the record with dst_node_id did not reach that node")
+	}
 }

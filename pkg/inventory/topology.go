@@ -94,6 +94,10 @@ func RenderTopology(in TopologyInput) (string, TopologySummary) {
 			byIP[ip] = append(byIP[ip], ep.GetNodeId())
 		}
 	}
+	registered := map[string]bool{}
+	for _, ep := range in.Endpoints {
+		registered[ep.GetNodeId()] = true
+	}
 	observed := map[string]bool{}
 	for _, s := range snaps {
 		observed[s.NodeID] = true
@@ -107,7 +111,7 @@ func RenderTopology(in TopologyInput) (string, TopologySummary) {
 	b.WriteString(`  edge [fontname="sans", fontsize=10];` + "\n")
 
 	var sum TopologySummary
-	standalone := map[string]bool{} // 상대로만 나온 등록 노드(스냅샷 없음)
+	standalone := map[string]bool{} // 상대로만 나온 노드(스냅샷 없음). 등록됐는지는 등록 목록으로 따로 본다
 	addrs := map[string]string{}    // 주소 상자 id → 라벨
 	var edgeLines []string
 
@@ -130,12 +134,17 @@ func RenderTopology(in TopologyInput) (string, TopologySummary) {
 		fmt.Fprintf(&b, "    label=%s;\n    style=rounded; color=\"#888888\";\n", dq(title+"\n"+when+"\nsnapshot "+short12(s.ID)))
 		fmt.Fprintf(&b, "    %s [label=%s, shape=box, style=\"rounded,filled\", fillcolor=\"#eeeeff\"];\n", dq(nodeID(node)), dq(node))
 
-		// 앱: 이 스냅샷의 엣지에 나온 비어 있지 않은 앱 키.
-		type app struct{ key, kind string }
-		apps := map[string]app{}
+		// 앱: 이 스냅샷의 엣지에 나온 비어 있지 않은 앱 키. 종류(app_key_kind)는 같은 키로 보고된 비어 있지 않은 값을
+		// 모두 모아 정렬해 적는다 — 기록 순서에 따라 라벨이 바뀌지 않고, 어느 값도 버리지 않는다.
+		apps := map[string]map[string]bool{}
 		for _, e := range s.Edges {
 			if k := e.GetAppKey(); k != "" {
-				apps[k] = app{k, e.GetAppKeyKind()}
+				if apps[k] == nil {
+					apps[k] = map[string]bool{}
+				}
+				if kind := e.GetAppKeyKind(); kind != "" {
+					apps[k][kind] = true
+				}
 			}
 		}
 		keys := make([]string, 0, len(apps))
@@ -146,10 +155,9 @@ func RenderTopology(in TopologyInput) (string, TopologySummary) {
 		libs := map[string]bool{}
 		var libLines []string
 		for _, k := range keys {
-			a := apps[k]
-			label := a.key
-			if a.kind != "" {
-				label += "\n(" + a.kind + ")"
+			label := k
+			if kinds := sortedSet(apps[k]); len(kinds) > 0 {
+				label += "\n(" + strings.Join(kinds, ", ") + ")"
 			}
 			fmt.Fprintf(&b, "    %s [label=%s, shape=component];\n", dq(appID(node, k)), dq(label))
 			for _, l := range assetsWithAppKey(k, s.Findings) {
@@ -199,7 +207,12 @@ func RenderTopology(in TopologyInput) (string, TopologySummary) {
 		if nm := names[n]; nm != "" && nm != n {
 			label = fmt.Sprintf("%s (%s)", n, nm)
 		}
-		extra = append(extra, fmt.Sprintf("  %s [label=%s, shape=box, style=\"rounded,dashed\"];\n", dq(nodeID(n)), dq(label+"\nregistered, no snapshot")))
+		// dst_node_id로만 나온 노드는 등록 목록에 없을 수 있다 — 그때는 「registered」라고 하지 않는다.
+		state := "no snapshot"
+		if registered[n] {
+			state = "registered, no snapshot"
+		}
+		extra = append(extra, fmt.Sprintf("  %s [label=%s, shape=box, style=\"rounded,dashed\"];\n", dq(nodeID(n)), dq(label+"\n"+state)))
 	}
 	for id, label := range addrs {
 		sum.Addresses++
@@ -332,9 +345,21 @@ func normIP(s string) string {
 	return ip.String()
 }
 
+// DOT의 노드 식별자는 클러스터를 넘어 공유된다. 그래서 앱·라이브러리 식별자는 노드 부분 앞에 그 길이를 적어 경계를
+// 남긴다 — 그냥 이으면 (노드 "a|b", 앱 "c")와 (노드 "a", 앱 "b|c")가 둘 다 "app|a|b|c"가 되어 두 노드의 관측이 한 앱에
+// 붙는다. 앱 키와 라이브러리 라벨은 마지막 구성요소라 노드 부분의 경계만 있으면 겹치지 않는다.
 func nodeID(n string) string       { return "node|" + n }
-func appID(n, key string) string   { return "app|" + n + "|" + key }
-func libID(n, label string) string { return "lib|" + n + "|" + label }
+func appID(n, key string) string   { return "app|" + strconv.Itoa(len(n)) + ":" + n + "|" + key }
+func libID(n, label string) string { return "lib|" + strconv.Itoa(len(n)) + ":" + n + "|" + label }
+
+func sortedSet(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
 
 func short12(id string) string {
 	if len(id) > 12 {

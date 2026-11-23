@@ -267,8 +267,8 @@ func TestTopologyPostgres(t *testing.T) {
 		t.Fatalf("-topology: exit %d, stderr %q\n%s", code, errOut, out)
 	}
 	for _, want := range []string{
-		`"app|web-01|/usr/bin/openssl" -> "node|web-02" [label="tls :443 · X25519MLKEM768 · ×3\nseen by web-01 as client"`,
-		`"node|web-01" -> "app|web-02|/usr/sbin/nginx" [label="tls :443 · X25519MLKEM768 · ×3\nseen by web-02 as server"`,
+		`"app|6:web-01|/usr/bin/openssl" -> "node|web-02" [label="tls :443 · X25519MLKEM768 · ×3\nseen by web-01 as client"`,
+		`"node|web-01" -> "app|6:web-02|/usr/sbin/nginx" [label="tls :443 · X25519MLKEM768 · ×3\nseen by web-02 as server"`,
 		`\nlast loaded 20`,
 	} {
 		if !strings.Contains(out, want) {
