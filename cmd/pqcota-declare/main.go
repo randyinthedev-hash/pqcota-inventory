@@ -23,11 +23,13 @@ import (
 	"strings"
 
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/sign"
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/declaration"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	out := flag.String("out", "declared-results", "directory to write the CollectionResult JSON into")
 	flag.Parse()
 	if flag.NArg() < 1 {

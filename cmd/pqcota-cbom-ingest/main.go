@@ -24,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/ingest"
@@ -31,6 +32,7 @@ import (
 )
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	// 소스 근거 경로(sourceevidence.go). 새 플래그가 하나도 없으면 아래 기존 경로가 그대로 돈다.
 	if o, handled, err := parseSourceEvidence(os.Args[1:]); handled {
 		if err != nil {
@@ -40,7 +42,7 @@ func main() {
 		os.Exit(runSourceEvidence(o, os.Stdin, os.Stdout, os.Stderr, openSourceEvidenceStore))
 	}
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: pqcota-cbom-ingest <cbom.json | -> <target-node-id>")
+		fmt.Fprintln(os.Stderr, "usage: pqcota-cbom-ingest <cbom.json | -> <target-node-id>\n       pqcota-cbom-ingest --version")
 		os.Exit(2)
 	}
 	src, nodeID := os.Args[1], os.Args[2]

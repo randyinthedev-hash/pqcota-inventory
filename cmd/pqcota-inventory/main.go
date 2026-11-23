@@ -28,6 +28,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
@@ -38,6 +39,7 @@ import (
 )
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	histNode := flag.String("history", "", "list a node's snapshot history (append-only measurement log)")
 	snapID := flag.String("snapshot", "", "detail for one snapshot — assets and observed edges")
 	diffPair := flag.String("diff", "", `changes between two snapshots — "older-id,newer-id" (first=older, second=newer; observations only, not a verdict)`)

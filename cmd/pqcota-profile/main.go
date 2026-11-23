@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory"
 )
@@ -29,6 +30,7 @@ func openMetaStore(ctx context.Context, dsn string) (*inventory.PgMetaStore, err
 }
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	dsn := flag.String("dsn", "", "inventory Postgres DSN; when given, upserts profiles")
 	flag.Parse()
 	if flag.NArg() < 1 {

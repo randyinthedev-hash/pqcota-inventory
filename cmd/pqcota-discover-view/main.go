@@ -19,14 +19,16 @@ import (
 	commonv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/common/v1"
 	discoveryv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/discovery/v1"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/posture"
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/normalize"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/resultio"
 )
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pqcota-discover-view <results-dir> [nodes.json] [topology-out.dot]")
+		fmt.Fprintln(os.Stderr, "usage: pqcota-discover-view <results-dir> [nodes.json] [topology-out.dot]\n       pqcota-discover-view --version")
 		os.Exit(2)
 	}
 	dir := os.Args[1]

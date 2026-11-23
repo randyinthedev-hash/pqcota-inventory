@@ -27,6 +27,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/sourceevidence"
@@ -80,6 +81,7 @@ func parse(args []string, stderr io.Writer) (opts, error) {
 }
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	o, err := parse(os.Args[1:], os.Stderr)
 	if err != nil {
 		if !errors.Is(err, flag.ErrHelp) {

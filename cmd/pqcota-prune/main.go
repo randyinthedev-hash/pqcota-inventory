@@ -27,12 +27,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 )
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	olderThan := flag.String("older-than", "", "prune change points older than this (e.g. 90d, 720h)")
 	keepLast := flag.Int("keep-last", 0, "keep the newest N change points per node")
 	apply := flag.Bool("apply", false, "actually delete (default is plan only)")

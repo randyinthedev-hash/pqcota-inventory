@@ -4,6 +4,8 @@ English · [한국어](README.ko.md)
 
 The CLIs (Go binaries) of the inventory stage. They **load into the center** what the collectors observed, and **read back**, read-only, what has accumulated. They are sorted into five categories.
 
+**Every command prints its version with `--version` (or `-version`) given alone**, for example `pqcota-ingest v0.19.0 (go1.26.11 linux/amd64)`, and does nothing else. A build that is not a release says `not a release build`. The source commit is in the release manifest, not in this line. Given together with other arguments, `--version` is read like any other argument.
+
 ## Setting up the database
 
 Create the tables **once, before anything else uses the database, and again after every upgrade**:

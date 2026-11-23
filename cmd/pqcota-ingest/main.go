@@ -48,6 +48,7 @@ import (
 	discoveryv1 "github.com/randyinthedev-hash/pqcota-common/gen/pqcota/discovery/v1"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/scope"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/sign"
+	"github.com/randyinthedev-hash/pqcota-common/pkg/kernel/version"
 	"github.com/randyinthedev-hash/pqcota-common/pkg/org"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/history"
 	"github.com/randyinthedev-hash/pqcota-inventory/pkg/inventory/ingest"
@@ -56,6 +57,7 @@ import (
 )
 
 func main() {
+	version.ExitIfRequested(os.Args[1:]) // 단독 --version·-version만 처리한다. 섞인 호출은 아래 규칙대로
 	scopeAssets := flag.String("scope-assets", "",
 		"asset scope policy CSV — what stays managed within a node (action,runtime,lib,app_key,note)")
 	verifyKeys := flag.Bool("verify-keys", false,
